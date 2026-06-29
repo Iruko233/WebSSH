@@ -48,7 +48,6 @@
 </template>
 
 <script setup lang="ts">
-import { CircleCheck, WarningFilled } from '@element-plus/icons-vue'
 import SecurityDiagram from './SecurityDiagram.vue'
 
 defineProps<{
