@@ -12,11 +12,6 @@ const router = createRouter({
       component: VaultSetup
     },
     {
-      path: '/about',
-      name: 'About',
-      component: () => import('../views/About.vue')
-    },
-    {
       path: '/',
       name: 'Dashboard',
       component: Dashboard,

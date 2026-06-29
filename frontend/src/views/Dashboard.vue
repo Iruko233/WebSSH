@@ -23,7 +23,7 @@
         <el-button text class="footer-btn" @click="showSecurity = true">
           <el-icon :size="20"><Key /></el-icon>
         </el-button>
-        <el-button text class="footer-btn" @click="router.push('/about')">
+        <el-button text class="footer-btn" @click="showAbout = true">
           <el-icon :size="20"><Reading /></el-icon>
         </el-button>
         <el-button text class="footer-btn" @click="handleLogout">
@@ -83,6 +83,7 @@
 
     <SettingsDialog v-model="showSettings" />
     <VaultSecurityDialog v-model="showSecurity" />
+    <AboutDialog v-model="showAbout" />
 
     <!-- Mobile Drawer Sidebar -->
     <el-drawer 
@@ -114,7 +115,7 @@
           <el-button text class="footer-btn" @click="showSecurity = true">
             <el-icon :size="20"><Key /></el-icon>
           </el-button>
-          <el-button text class="footer-btn" @click="router.push('/about')">
+          <el-button text class="footer-btn" @click="showAbout = true">
             <el-icon :size="20"><Reading /></el-icon>
           </el-button>
           <el-button text class="footer-btn" @click="handleLogout">
@@ -135,6 +136,7 @@ import ServerForm from '../components/ServerForm.vue'
 import Terminal from '../components/Terminal.vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
 import VaultSecurityDialog from '../components/VaultSecurityDialog.vue'
+import AboutDialog from '../components/AboutDialog.vue'
 import { useTerminalStore } from '../stores/terminal'
 import { useAuthStore } from '../stores/auth'
 import type { DecryptedServer } from '../stores/server'
@@ -146,6 +148,7 @@ const router = useRouter()
 const showAddServer = ref(false)
 const showSettings = ref(false)
 const showSecurity = ref(false)
+const showAbout = ref(false)
 const showMobileSidebar = ref(false)
 const editingServer = ref<DecryptedServer | null>(null)
 

@@ -33,6 +33,8 @@ const isLoading = ref(true)
 let mermaidInstance: any = null
 let pzInstance: PanZoom | null = null
 
+const textColor = computed(() => isDark.value ? '#e5e7eb' : '#374151')
+
 const graphDefinition = computed(() => {
   return `
 flowchart LR
@@ -60,14 +62,14 @@ flowchart LR
     Server == "3. ${t('setup.secFlow3Title')}\\n(${t('setup.secFlow3Desc')})" ==> Target
 
     %% Styling
-    classDef safe fill:#10b981,stroke:#047857,stroke-width:2px,color:#fff;
-
+    classDef default rx:6px,ry:6px,stroke-width:1px;
+    classDef safe fill:transparent,stroke:#10b981,stroke-width:1px,color:${textColor.value};
 
     class S1,S2 safe;
 
-    linkStyle 0 stroke:#10b981,stroke-width:2px;
-    linkStyle 1 stroke:#3b82f6,stroke-width:2px;
-    linkStyle 2 stroke:#3b82f6,stroke-width:2px;
+    linkStyle 0 stroke:#10b981,stroke-width:1.5px;
+    linkStyle 1 stroke:#3b82f6,stroke-width:1.5px;
+    linkStyle 2 stroke:#3b82f6,stroke-width:1.5px;
 `
 })
 
@@ -82,7 +84,18 @@ async function renderDiagram() {
 
     mermaidInstance.initialize({
       startOnLoad: false,
-      theme: isDark.value ? 'dark' : 'default',
+      theme: 'base',
+      themeVariables: {
+        fontFamily: 'inherit',
+        primaryColor: isDark.value ? '#1e1e1e' : '#ffffff',
+        primaryTextColor: isDark.value ? '#e5e7eb' : '#374151',
+        primaryBorderColor: isDark.value ? '#374151' : '#e5e7eb',
+        lineColor: isDark.value ? '#4b5563' : '#9ca3af',
+        secondaryColor: isDark.value ? '#2d3748' : '#f3f4f6',
+        tertiaryColor: isDark.value ? '#1a202c' : '#f9fafb',
+        clusterBkg: isDark.value ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+        clusterBorder: isDark.value ? '#374151' : '#e5e7eb',
+      },
       securityLevel: 'loose',
       fontFamily: 'var(--font-sans)',
       flowchart: {
@@ -166,13 +179,12 @@ watch([isDark, () => graphDefinition.value], () => {
 .security-diagram-wrapper {
   position: relative;
   width: 100%;
-  min-height: 450px;
+  min-height: 400px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 16px 0;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border-radius: 8px;
   background: var(--bg-secondary);
   overflow: hidden;
 }
@@ -181,7 +193,7 @@ watch([isDark, () => graphDefinition.value], () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   color: var(--text-secondary);
   font-size: 14px;
 }
@@ -215,8 +227,36 @@ watch([isDark, () => graphDefinition.value], () => {
   bottom: 16px;
   right: 16px;
   z-index: 10;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  padding: 2px;
+  display: flex;
+}
+
+.zoom-controls :deep(.el-button-group) {
+  display: flex;
+  gap: 2px;
+}
+
+.zoom-controls :deep(.el-button) {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  width: 28px;
+  height: 28px;
+  border-radius: 4px !important;
+  transition: color 0.2s, background 0.2s;
+  padding: 0;
+}
+
+.zoom-controls :deep(.el-button:hover) {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.zoom-controls :deep(.el-button:active) {
+  transform: scale(0.95);
 }
 
 .mermaid-container :deep(svg) {
