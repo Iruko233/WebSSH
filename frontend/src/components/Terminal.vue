@@ -16,6 +16,17 @@
           </el-button>
         </el-tooltip>
 
+        <el-tooltip :content="t('terminal.commandBar') || 'Command Compose'" placement="left">
+          <el-button 
+            class="command-toggle" 
+            :type="showCommandBar ? 'primary' : 'default'"
+            @click="showCommandBar = !showCommandBar" 
+            circle
+          >
+            <el-icon><ChatLineSquare /></el-icon>
+          </el-button>
+        </el-tooltip>
+
         <el-button
           class="stats-toggle"
           :type="showStats ? 'primary' : 'default'"
@@ -49,6 +60,24 @@
           <ServerStats v-if="sysStats" :stats="sysStats" />
         </div>
       </Transition>
+
+      <div v-show="showCommandBar" class="command-bar">
+        <el-input
+          v-model="commandInput"
+          type="textarea"
+          :rows="2"
+          resize="none"
+          :placeholder="t('terminal.commandPlaceholder') || 'Type command here... Press Ctrl+Enter to send'"
+          @keydown.ctrl.enter.prevent="sendCommand"
+          class="command-input"
+        />
+        <el-button type="primary" class="command-send-btn" @click="sendCommand">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 10 4 15 9 20"></polyline>
+            <path d="M20 4v7a4 4 0 0 1-4 4H4"></path>
+          </svg>
+        </el-button>
+      </div>
 
       <MobileKeyboard 
         v-if="width <= 768"
@@ -84,7 +113,7 @@ import { useSettingsStore } from '../stores/settings'
 import { THEMES } from '../lib/themes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Folder, Odometer, Close, Menu } from '@element-plus/icons-vue'
+import { Folder, Odometer, Close, Menu, ChatLineSquare } from '@element-plus/icons-vue'
 import FileManager from './FileManager.vue'
 import ServerStats from './ServerStats.vue'
 import MobileKeyboard from './MobileKeyboard.vue'
@@ -116,6 +145,8 @@ const { t } = useI18n()
 
 const showSftp = ref(false)
 const showStats = ref(false)
+const showCommandBar = ref(false)
+const commandInput = ref('')
 const sysStats = ref<SysStats | null>(null)
 const server = computed(() => serverStore.servers.find(s => s.id === props.serverId))
 
@@ -138,6 +169,12 @@ const handleKeyboardInput = (data: string) => {
   }
   ctrlActive.value = false
   altActive.value = false
+}
+
+const sendCommand = () => {
+  if (!commandInput.value || !sshConn.value) return
+  sshConn.value.sendInput(commandInput.value + '\r')
+  commandInput.value = ''
 }
 
 watch(() => sysStats.value, (newVal, oldVal) => {
@@ -459,6 +496,12 @@ watch(showSftp, () => {
     debouncedFit()
   }, 100)
 })
+
+watch(showCommandBar, () => {
+  setTimeout(() => {
+    debouncedFit()
+  }, 100)
+})
 </script>
 
 <style scoped>
@@ -526,7 +569,7 @@ watch(showSftp, () => {
   gap: 12px;
 }
 
-.sftp-toggle, .stats-toggle, .mobile-menu-btn {
+.sftp-toggle, .stats-toggle, .command-toggle, .mobile-menu-btn {
   margin: 0 !important;
   background: color-mix(in srgb, var(--term-bg, #1e1e24) 70%, var(--term-fg, #abb2bf) 30%) !important;
   border: 1px solid color-mix(in srgb, var(--term-fg, #abb2bf) 20%, transparent) !important;
@@ -536,7 +579,7 @@ watch(showSftp, () => {
   transition: all 0.3s ease;
 }
 
-.sftp-toggle:hover, .stats-toggle:hover, .mobile-menu-btn:hover {
+.sftp-toggle:hover, .stats-toggle:hover, .command-toggle:hover, .mobile-menu-btn:hover {
   background: color-mix(in srgb, var(--term-bg, #1e1e24) 50%, var(--term-fg, #abb2bf) 50%) !important;
   color: var(--term-fg, #abb2bf) !important;
   transform: scale(1.1);
@@ -544,6 +587,7 @@ watch(showSftp, () => {
 
 .sftp-toggle.el-button--primary,
 .stats-toggle.el-button--primary,
+.command-toggle.el-button--primary,
 .mobile-menu-btn.el-button--primary {
   background: color-mix(in srgb, var(--term-cursor, #528bff) 35%, var(--term-bg, #1e1e24) 65%) !important;
   border-color: color-mix(in srgb, var(--term-cursor, #528bff) 50%, transparent) !important;
@@ -658,5 +702,45 @@ watch(showSftp, () => {
 }
 :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
   background-color: rgba(255, 255, 255, 0.4);
+}
+
+.command-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px;
+  background-color: color-mix(in srgb, var(--term-bg, #1e1e24) 95%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--term-fg, #abb2bf) 15%, transparent);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.command-input {
+  flex: 1;
+}
+
+.command-input :deep(.el-textarea__inner) {
+  background-color: color-mix(in srgb, var(--term-bg, #1e1e24) 90%, #fff 10%);
+  color: var(--term-fg, #abb2bf);
+  border-color: color-mix(in srgb, var(--term-fg, #abb2bf) 20%, transparent);
+  font-family: var(--font-mono);
+  box-shadow: none;
+}
+
+.command-input :deep(.el-textarea__inner:focus) {
+  border-color: var(--term-cursor, #528bff);
+  background-color: color-mix(in srgb, var(--term-bg, #1e1e24) 85%, #fff 15%);
+}
+
+.command-send-btn {
+  height: 48px;
+  width: 48px;
+  min-width: 48px;
+  border-radius: 8px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
 }
 </style>

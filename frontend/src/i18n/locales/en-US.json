@@ -133,7 +133,9 @@
     "hostKeyPromptMismatch": "<strong>Possible MITM Attack!</strong><br>It is possible that someone is doing something nasty! Someone could be eavesdropping on you right now (man-in-the-middle attack)! It is also possible that a host key has just been changed.<br>New SHA256 key fingerprint is:<br><code>{fingerprint}</code><br>Are you sure you want to overwrite the old key and continue connecting?",
     "hostKeyPromptAccept": "Accept and Connect",
     "hostKeyPromptReject": "Cancel",
-    "hostKeyAccepted": "New host key accepted and saved to vault, Reconnecting.."
+    "hostKeyAccepted": "New host key accepted and saved to vault, Reconnecting..",
+    "commandBar": "Command Compose Box",
+    "commandPlaceholder": "Type command here... Press Ctrl+Enter to send"
   },
   "settings": {
     "title": "Global Settings",

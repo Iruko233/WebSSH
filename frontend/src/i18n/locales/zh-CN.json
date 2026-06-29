@@ -133,7 +133,9 @@
     "hostKeyPromptMismatch": "<strong>可能的中间人攻击！</strong><br>远程主机的身份标识发生了变化，这可能是由于服务器重装了操作系统，或者有人正在截获您的网络连接，<br>原来的主机公钥与现在接收到的不匹配，<br>新的指纹 (SHA256)：<br><code>{fingerprint}</code><br>您确定要覆盖原有的公钥并继续连接吗？",
     "hostKeyPromptAccept": "同意并连接",
     "hostKeyPromptReject": "取消",
-    "hostKeyAccepted": "已接受新主机指纹并存入保险库，正在重新连接..."
+    "hostKeyAccepted": "已接受新主机指纹并存入保险库，正在重新连接...",
+    "commandBar": "快捷命令栏",
+    "commandPlaceholder": "在此输入命令（多行）... 按 Ctrl+Enter 发送到终端"
   },
   "settings": {
     "title": "全局设置",
