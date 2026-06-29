@@ -37,15 +37,12 @@ func migrate(db *sql.DB) error {
 			auth_hash   TEXT NOT NULL,
 			jwt_secret  TEXT NOT NULL,
 			kdf_algo    TEXT NOT NULL DEFAULT 'pbkdf2-sha512',
-			kdf_params  TEXT NOT NULL DEFAULT '{"algorithm":"pbkdf2-sha512","iterations":1000000,"cipher":"AES-256-GCM","keyLength":256}',
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+			kdf_params  TEXT NOT NULL DEFAULT '{"algorithm":"pbkdf2-sha512","iterations":1000000,"cipher":"AES-256-GCM","keyLength":256}'
 		)`,
 		`CREATE TABLE IF NOT EXISTS servers (
 			id             TEXT PRIMARY KEY,
 			encrypted_data TEXT NOT NULL,
-			iv             TEXT NOT NULL,
-			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+			iv             TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_settings (
 			id            INTEGER PRIMARY KEY CHECK (id = 1),
@@ -59,9 +56,12 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
-	// Best-effort migration to drop the old name column if it exists.
+	// Best-effort migration to drop old columns if they exist.
 	// Requires SQLite 3.35.0+ which is typical in modern go-sqlite3.
 	db.Exec("ALTER TABLE servers DROP COLUMN name")
+	db.Exec("ALTER TABLE servers DROP COLUMN created_at")
+	db.Exec("ALTER TABLE servers DROP COLUMN updated_at")
+	db.Exec("ALTER TABLE vault_config DROP COLUMN created_at")
 
 	return nil
 }

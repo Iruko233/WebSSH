@@ -105,8 +105,6 @@ export interface ServerEntry {
   id: string;
   encryptedData: string;
   iv: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface ServerCredentials {
@@ -118,6 +116,8 @@ export interface ServerCredentials {
   password: string;
   os?: string;
   expectedHostKey?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CreateServerRequest {

@@ -194,11 +194,10 @@ func (h *VaultHandler) Rekey(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().Format(time.RFC3339)
 	for _, srv := range req.Servers {
 		_, err = tx.Exec(
-			"UPDATE servers SET encrypted_data = ?, iv = ?, updated_at = ? WHERE id = ?",
-			srv.EncryptedData, srv.IV, now, srv.ID,
+			"UPDATE servers SET encrypted_data = ?, iv = ? WHERE id = ?",
+			srv.EncryptedData, srv.IV, srv.ID,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "批量更新服务器失败"})

@@ -73,6 +73,12 @@ export const useServerStore = defineStore('server', {
             })
           }
         }
+        // Sort by createdAt descending
+        decrypted.sort((a, b) => {
+          const tA = a.credentials.createdAt ? new Date(a.credentials.createdAt).getTime() : 0;
+          const tB = b.credentials.createdAt ? new Date(b.credentials.createdAt).getTime() : 0;
+          return tB - tA;
+        })
         
         this.servers = decrypted
       } catch (err: any) {
@@ -86,7 +92,8 @@ export const useServerStore = defineStore('server', {
       const authStore = useAuthStore()
       if (!authStore.encKey) throw new Error('Encryption key not loaded')
       
-      const credentialsWithname = { ...credentials, name }
+      const now = new Date().toISOString()
+      const credentialsWithname = { ...credentials, name, createdAt: now, updatedAt: now }
       const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
       
       await api.createServer({ encryptedData, iv })
@@ -97,7 +104,11 @@ export const useServerStore = defineStore('server', {
       const authStore = useAuthStore()
       if (!authStore.encKey) throw new Error('Encryption key not loaded')
       
-      const credentialsWithname = { ...credentials, name }
+      const existing = this.servers.find(s => s.id === id)
+      const createdAt = existing?.credentials.createdAt || new Date().toISOString()
+      const now = new Date().toISOString()
+      
+      const credentialsWithname = { ...credentials, name, createdAt, updatedAt: now }
       const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
       
       await api.updateServer(id, { encryptedData, iv })

@@ -3,7 +3,6 @@ package handler
 import (
 	"database/sql"
 	"net/http"
-	"time"
 
 	"webssh-backend/internal/model"
 
@@ -20,7 +19,7 @@ func NewServerHandler(db *sql.DB) *ServerHandler {
 }
 
 func (h *ServerHandler) List(c *gin.Context) {
-	rows, err := h.db.Query("SELECT id, encrypted_data, iv, created_at, updated_at FROM servers ORDER BY created_at DESC")
+	rows, err := h.db.Query("SELECT id, encrypted_data, iv FROM servers")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询服务器列表失败"})
 		return
@@ -30,7 +29,7 @@ func (h *ServerHandler) List(c *gin.Context) {
 	servers := make([]model.Server, 0)
 	for rows.Next() {
 		var s model.Server
-		if err := rows.Scan(&s.ID, &s.EncryptedData, &s.IV, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.EncryptedData, &s.IV); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取服务器数据失败"})
 			return
 		}
@@ -48,11 +47,10 @@ func (h *ServerHandler) Create(c *gin.Context) {
 	}
 
 	id := uuid.New().String()
-	now := time.Now().Format(time.RFC3339)
 
 	_, err := h.db.Exec(
-		"INSERT INTO servers (id, encrypted_data, iv, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		id, req.EncryptedData, req.IV, now, now,
+		"INSERT INTO servers (id, encrypted_data, iv) VALUES (?, ?, ?)",
+		id, req.EncryptedData, req.IV,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加服务器失败"})
@@ -63,8 +61,6 @@ func (h *ServerHandler) Create(c *gin.Context) {
 		ID:            id,
 		EncryptedData: req.EncryptedData,
 		IV:            req.IV,
-		CreatedAt:     now,
-		UpdatedAt:     now,
 	})
 }
 
@@ -77,12 +73,10 @@ func (h *ServerHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Build dynamic update
-	now := time.Now().Format(time.RFC3339)
 	if req.EncryptedData != "" && req.IV != "" {
 		_, err := h.db.Exec(
-			"UPDATE servers SET encrypted_data = ?, iv = ?, updated_at = ? WHERE id = ?",
-			req.EncryptedData, req.IV, now, id,
+			"UPDATE servers SET encrypted_data = ?, iv = ? WHERE id = ?",
+			req.EncryptedData, req.IV, id,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新服务器失败"})
@@ -95,8 +89,8 @@ func (h *ServerHandler) Update(c *gin.Context) {
 
 	// Return updated server
 	var s model.Server
-	err := h.db.QueryRow("SELECT id, encrypted_data, iv, created_at, updated_at FROM servers WHERE id = ?", id).
-		Scan(&s.ID, &s.EncryptedData, &s.IV, &s.CreatedAt, &s.UpdatedAt)
+	err := h.db.QueryRow("SELECT id, encrypted_data, iv FROM servers WHERE id = ?", id).
+		Scan(&s.ID, &s.EncryptedData, &s.IV)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "服务器不存在"})
 		return

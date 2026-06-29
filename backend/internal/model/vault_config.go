@@ -9,7 +9,6 @@ type VaultConfig struct {
 	JWTSecret string `json:"-"`
 	KdfAlgo   string `json:"kdfAlgo"`
 	KdfParams string `json:"-"` // stored as JSON string in DB
-	CreatedAt string `json:"createdAt"`
 }
 
 // KdfParamsRaw returns the KDF params as raw JSON for API responses.

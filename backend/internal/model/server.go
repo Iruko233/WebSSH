@@ -4,8 +4,6 @@ type Server struct {
 	ID            string `json:"id"`
 	EncryptedData string `json:"encryptedData"`
 	IV            string `json:"iv"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt"`
 }
 
 type CreateServerRequest struct {
