@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on tags like v1.0.0
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to create releases and upload assets
+
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22' # Change this to match your project's Go version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build WASM
+        working-directory: ./frontend/wasm
+        run: |
+          GOOS=js GOARCH=wasm go build -o ../public/main.wasm .
+
+      - name: Build Frontend
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare Backend Static Files
+        run: |
+          mkdir -p backend/internal/staticfs/static
+          cp -r frontend/dist/* backend/internal/staticfs/static/
+
+      - name: Build Backend Binary
+        working-directory: ./backend
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          BINARY_NAME=webssh-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME=${BINARY_NAME}.exe
+          fi
+          
+          echo "Building $BINARY_NAME..."
+          go build -ldflags="-s -w" -o $BINARY_NAME ./cmd/server
+          
+          # Directly use binary as asset
+          echo "ASSET=${BINARY_NAME}" >> $GITHUB_ENV
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: backend/${{ env.ASSET }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

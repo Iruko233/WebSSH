@@ -1,0 +1,32 @@
+# Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Built binaries
+webssh
+webssh-linux
+webssh-darwin
+
+# Build artifact: copy of frontend/dist for Go embed
+backend/internal/staticfs/static/
+
+# Compiled WASM binary (built from frontend/wasm/)
+frontend/public/main.wasm
+
+# Data
+backend/data/
+
+# Frontend Node
+frontend/node_modules/
+frontend/dist/
+frontend/.DS_Store
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+build/
