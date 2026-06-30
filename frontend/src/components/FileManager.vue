@@ -1,12 +1,37 @@
 <template>
-  <div class="file-manager" v-loading="loading">
+  <div 
+    class="file-manager" 
+    v-loading="loading"
+    @dragenter.prevent="handleDragEnter"
+    @dragleave.prevent="handleDragLeave"
+    @dragover.prevent
+    @drop.prevent="handleDrop"
+  >
     <div class="fm-header">
-      <div class="fm-path-bar">
+      <div class="fm-path-bar" @dblclick="pathEditMode = true">
         <el-button size="small" :icon="Top" @click="goUp" circle title="Go Up" />
+        <template v-if="!pathEditMode">
+          <div class="fm-breadcrumbs">
+            <el-breadcrumb separator="/">
+              <el-breadcrumb-item @click="navigateTo('/')"><el-icon><Monitor /></el-icon></el-breadcrumb-item>
+              <el-breadcrumb-item 
+                v-for="(part, idx) in pathParts" 
+                :key="idx" 
+                @click="navigateToPart(idx)"
+              >
+                {{ part }}
+              </el-breadcrumb-item>
+            </el-breadcrumb>
+          </div>
+          <el-button link :icon="EditPen" @click="pathEditMode = true" size="small" class="path-edit-btn" />
+        </template>
         <el-input 
+          v-else
           v-model="inputPath" 
           size="small" 
-          @keyup.enter="navigateTo(inputPath)" 
+          ref="pathInputRef"
+          @keyup.enter="handlePathEnter" 
+          @blur="pathEditMode = false"
           style="margin-left: 8px; width: 100%;"
         >
           <template #prefix>
@@ -15,24 +40,32 @@
         </el-input>
       </div>
       <div class="fm-actions">
-        <el-button size="small" :icon="Refresh" circle @click="refresh" />
-        <el-button size="small" :icon="FolderAdd" circle @click="promptMkdir" />
-        <el-button size="small" :icon="DocumentAdd" circle @click="promptCreate" />
-        <el-button size="small" :icon="Upload" circle @click="() => fileInput?.click()" />
+        <template v-if="selectedFiles.length > 0">
+          <span class="selection-count">{{ $t('fileManager.selectedCount', { count: selectedFiles.length }) }}</span>
+          <el-button size="small" :icon="Download" @click="batchDownload" type="primary" plain>{{ $t('fileManager.download') }}</el-button>
+          <el-button size="small" :icon="Delete" @click="batchDelete" type="danger" plain>{{ $t('fileManager.delete') }}</el-button>
+        </template>
+        <template v-else>
+          <el-button size="small" :icon="Refresh" circle @click="refresh" />
+          <el-button size="small" :icon="FolderAdd" circle @click="promptMkdir" />
+          <el-button size="small" :icon="DocumentAdd" circle @click="promptCreate" />
+          <el-button size="small" :icon="Upload" circle @click="() => fileInput?.click()" />
+        </template>
         <input type="file" ref="fileInput" style="display: none" @change="handleFileSelect" multiple />
       </div>
     </div>
 
-    <el-table
-      :data="files"
-      style="width: 100%"
-      height="100%"
-      class="fm-table"
+    <div class="table-container">
+      <el-table
+        :data="files"
+        style="width: 100%"
+        height="100%"
+        class="fm-table"
+        @selection-change="handleSelectionChange"
       @row-dblclick="handleRowDblClick"
       @row-contextmenu="handleContextMenu"
-      @dragover.prevent
-      @drop.prevent="handleDrop"
     >
+      <el-table-column type="selection" width="40" />
       <el-table-column :label="$t('fileManager.name')" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
           <div class="file-name-cell">
@@ -44,6 +77,7 @@
           </div>
         </template>
       </el-table-column>
+      <el-table-column :label="$t('fileManager.permissions')" width="110" prop="permissions" />
       <el-table-column :label="$t('fileManager.size')" width="100">
         <template #default="{ row }">
           {{ row.isDir ? '--' : formatSize(row.size) }}
@@ -69,6 +103,7 @@
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
     <!-- Inline Editor Dialog -->
     <el-dialog v-model="editorVisible" :title="editingFileName" width="80%" top="5vh" class="editor-dialog" destroy-on-close>
@@ -90,6 +125,7 @@
 
     <!-- Context Menu -->
     <ul
+      ref="contextMenuRef"
       v-show="contextMenuVisible"
       :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
       class="context-menu"
@@ -116,6 +152,13 @@
         <el-progress :percentage="t.progress" :show-text="false" />
       </div>
     </div>
+    <!-- Drag Overlay -->
+    <div v-show="isDragging" class="drag-overlay">
+      <div class="drag-content">
+        <el-icon class="drag-icon"><UploadFilled /></el-icon>
+        <span>{{ $t('fileManager.dropHere') }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -129,8 +172,9 @@ import type { FileInfo } from '../lib/ssh-client'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Folder, Document, Refresh, 
-  FolderAdd, DocumentAdd, MoreFilled, Edit, Delete, Upload, Download, Top
+  FolderAdd, DocumentAdd, MoreFilled, Edit, Delete, Upload, Download, Top, Monitor, EditPen, UploadFilled
 } from '@element-plus/icons-vue'
+import { nextTick } from 'vue'
 
 const props = defineProps<{
   sshConn: SSHConnection
@@ -143,6 +187,14 @@ const loading = ref(false)
 const files = ref<FileInfo[]>([])
 const currentPath = ref('/root')
 const inputPath = ref('/root')
+
+const pathEditMode = ref(false)
+const pathInputRef = ref<any>(null)
+const selectedFiles = ref<FileInfo[]>([])
+
+const pathParts = computed(() => {
+  return currentPath.value.split('/').filter(p => p)
+})
 
 // Editor state
 const editorVisible = ref(false)
@@ -167,13 +219,52 @@ const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextMenuRow = ref<FileInfo | null>(null)
+const contextMenuRef = ref<HTMLElement | null>(null)
 
-const handleContextMenu = (row: FileInfo, _column: any, event: MouseEvent) => {
+// Drag overlay state
+const isDragging = ref(false)
+let dragCounter = 0
+
+const handleDragEnter = (e: DragEvent) => {
+  if (editorVisible.value) return
+  if (e.dataTransfer?.types.includes('Files')) {
+    dragCounter++
+    isDragging.value = true
+  }
+}
+
+const handleDragLeave = (e: DragEvent) => {
+  if (editorVisible.value) return
+  if (e.dataTransfer?.types.includes('Files')) {
+    dragCounter--
+    if (dragCounter <= 0) {
+      dragCounter = 0
+      isDragging.value = false
+    }
+  }
+}
+
+const handleContextMenu = async (row: FileInfo, _column: any, event: MouseEvent) => {
   event.preventDefault()
   contextMenuRow.value = row
   contextMenuX.value = event.clientX
   contextMenuY.value = event.clientY
   contextMenuVisible.value = true
+
+  await nextTick()
+  if (contextMenuRef.value) {
+    const rect = contextMenuRef.value.getBoundingClientRect()
+    // Adjust if menu goes beyond right edge
+    if (contextMenuX.value + rect.width > window.innerWidth) {
+      contextMenuX.value = window.innerWidth - rect.width - 10
+    }
+    // Adjust if menu goes beyond bottom edge
+    if (contextMenuY.value + rect.height > window.innerHeight) {
+      // If subtracting height goes above top of screen, just set it to 10
+      const newY = event.clientY - rect.height
+      contextMenuY.value = newY > 0 ? newY : 10
+    }
+  }
 }
 
 const closeContextMenu = () => {
@@ -223,6 +314,24 @@ const refresh = async () => {
   }
 }
 
+const navigateToPart = (idx: number) => {
+  const newPath = '/' + pathParts.value.slice(0, idx + 1).join('/')
+  navigateTo(newPath)
+}
+
+const handlePathEnter = () => {
+  navigateTo(inputPath.value)
+  pathEditMode.value = false
+}
+
+watch(pathEditMode, async (newVal) => {
+  if (newVal) {
+    inputPath.value = currentPath.value
+    await nextTick()
+    pathInputRef.value?.focus()
+  }
+})
+
 const navigateTo = (path: string) => {
   if (!path) path = '/'
   if (!path.startsWith('/')) path = '/' + path
@@ -238,22 +347,76 @@ const goUp = () => {
   navigateTo('/' + parts.join('/'))
 }
 
+const isTextExtension = (ext: string) => {
+  const exts = ['txt', 'md', 'json', 'js', 'ts', 'go', 'py', 'sh', 'html', 'css', 'xml', 'yaml', 'yml', 'ini', 'conf', 'csv']
+  return exts.includes(ext)
+}
+
+const isKnownBinary = (ext: string) => {
+  const exts = ['zip', 'tar', 'gz', 'rar', '7z', 'exe', 'dll', 'so', 'bin', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'mp4', 'webm', 'ogg', 'mp3', 'wav', 'flac']
+  return exts.includes(ext)
+}
+
 const handleRowDblClick = async (row: FileInfo) => {
   if (row.isDir) {
     navigateTo(resolvePath(row.name))
-  } else {
+    return
+  }
+
+  const path = resolvePath(row.name)
+  const ext = row.name.split('.').pop()?.toLowerCase() || ''
+  
+  let fileType = 'unknown'
+
+  if (isTextExtension(ext) || row.name.toLowerCase() === 'dockerfile' || row.name.toLowerCase() === 'makefile') fileType = 'text'
+  else if (isKnownBinary(ext)) fileType = 'binary'
+  else {
+    try {
+      loading.value = true
+      const chunk = await props.sshConn.sftpReadFirstBytes(path, 512)
+      let hasNull = false
+      for (let i = 0; i < chunk.length; i++) {
+        if (chunk[i] === 0) {
+          hasNull = true
+          break
+        }
+      }
+      fileType = hasNull ? 'binary' : 'text'
+    } catch (e) {
+      console.warn("Failed to read magic bytes, assuming binary", e)
+      fileType = 'binary'
+    } finally {
+      loading.value = false
+    }
+  }
+
+  if (fileType === 'binary') {
+    try {
+      await ElMessageBox.confirm(t('fileManager.binaryPrompt'), t('fileManager.warning'), { type: 'warning' })
+      downloadFile(row)
+    } catch {
+      // cancelled
+    }
+    return
+  }
+
+  if (fileType === 'text') {
     if (row.size > 500 * 1024) {
-      ElMessage.warning(t('fileManager.tooLarge'))
+      try {
+        await ElMessageBox.confirm(t('fileManager.textTooLarge'), t('fileManager.warning'), { type: 'warning' })
+        downloadFile(row)
+      } catch {
+        // cancelled
+      }
       return
     }
-    // Open file editor
-    const path = resolvePath(row.name)
-    loading.value = true
+
     try {
+      loading.value = true
       const content = await props.sshConn.sftpRead(path)
-      editorContent.value = content
       editingFilePath.value = path
       editingFileName.value = row.name
+      editorContent.value = content
       editingFileModTime.value = row.modTime
       editorVisible.value = true
     } catch (err: any) {
@@ -261,6 +424,7 @@ const handleRowDblClick = async (row: FileInfo) => {
     } finally {
       loading.value = false
     }
+    return
   }
 }
 
@@ -333,6 +497,38 @@ const handleCommand = async (cmd: string, row: FileInfo) => {
       loading.value = false
     }
   } else if (cmd === 'download' && !row.isDir) {
+    downloadFile(row)
+  }
+}
+
+const handleSelectionChange = (val: FileInfo[]) => {
+  selectedFiles.value = val
+}
+
+const batchDownload = async () => {
+  for (const file of selectedFiles.value) {
+    if (!file.isDir) {
+      await downloadFile(file)
+    }
+  }
+}
+
+const batchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(t('fileManager.deleteConfirm', { name: `${selectedFiles.value.length} items` }), t('fileManager.warning'), { type: 'warning' })
+    loading.value = true
+    for (const file of selectedFiles.value) {
+      const path = resolvePath(file.name)
+      await props.sshConn.sftpRemove(path)
+    }
+    refresh()
+  } catch (e) {
+    loading.value = false
+  }
+}
+
+const downloadFile = async (row: FileInfo) => {
+    const path = resolvePath(row.name)
     const transferId = Math.random().toString(36).substring(2)
     const transfer: Transfer = { id: transferId, name: row.name, type: 'download', progress: 0 }
     activeTransfers.value.push(transfer)
@@ -359,10 +555,12 @@ const handleCommand = async (cmd: string, row: FileInfo) => {
     } finally {
       activeTransfers.value = activeTransfers.value.filter(t => t.id !== transferId)
     }
-  }
 }
 
 const handleDrop = (e: DragEvent) => {
+  dragCounter = 0
+  isDragging.value = false
+  if (editorVisible.value) return
   const dt = e.dataTransfer
   if (dt && dt.files) {
     for (let i = 0; i < dt.files.length; i++) {
@@ -466,6 +664,7 @@ const formatDate = (ms: number) => {
   flex-direction: column;
   height: 100%;
   background-color: var(--el-bg-color);
+  position: relative;
 }
 
 .fm-header {
@@ -484,8 +683,43 @@ const formatDate = (ms: number) => {
   margin-right: 16px;
 }
 
+.fm-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  padding: 0 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
 .fm-breadcrumbs::-webkit-scrollbar {
   display: none;
+}
+.fm-breadcrumbs :deep(.el-breadcrumb) {
+  display: flex;
+  align-items: center;
+}
+.fm-breadcrumbs :deep(.el-breadcrumb__item) {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.fm-breadcrumbs :deep(.el-breadcrumb__inner) {
+  cursor: pointer !important;
+  font-weight: normal;
+}
+.fm-breadcrumbs :deep(.el-breadcrumb__inner:hover) {
+  color: var(--el-color-primary);
+}
+.path-edit-btn {
+  margin-left: 4px;
+}
+.selection-count {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-right: 8px;
+  display: flex;
+  align-items: center;
 }
 
 .separator {
@@ -498,8 +732,16 @@ const formatDate = (ms: number) => {
   gap: 4px;
 }
 
-.fm-table {
+.table-container {
   flex: 1;
+  min-height: 0;
+  height: 0;
+  width: 100%;
+}
+
+.fm-table {
+  width: 100%;
+  height: 100%;
 }
 
 .file-name-cell {
@@ -597,5 +839,79 @@ const formatDate = (ms: number) => {
 .transfer-speed {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(var(--el-color-primary-rgb), 0.1);
+  backdrop-filter: blur(4px);
+  z-index: 4000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 2px dashed var(--el-color-primary);
+  border-radius: 8px;
+  margin: 8px;
+  pointer-events: none;
+}
+
+.drag-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: var(--el-color-primary);
+  font-size: 24px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.drag-icon {
+  font-size: 64px;
+  animation: bounce 1s infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.preview-dialog :deep(.el-dialog__body) {
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--el-bg-color-overlay);
+  min-height: 200px;
+}
+
+.preview-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  max-height: 80vh;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+}
+
+.preview-video {
+  max-width: 100%;
+  max-height: 80vh;
+}
+
+.preview-audio {
+  width: 100%;
+  max-width: 600px;
+  margin: 20px;
 }
 </style>

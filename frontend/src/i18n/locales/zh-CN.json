@@ -3,7 +3,13 @@
     "title": "WebSSH",
     "lockVault": "锁定保险库",
     "wakingUp": "正在唤醒保险库...",
-    "about": "关于 WebSSH"
+    "about": "关于 WebSSH",
+    "version": "版本：{version}",
+    "checkingUpdate": "正在检查更新...",
+    "newVersion": "发现新版本：{version}",
+    "latestVersion": "已是最新版本",
+    "viewChangelog": "查看更新日志",
+    "releaseNotes": "发行说明"
   },
   "setup": {
     "welcomeBack": "欢迎回来",
@@ -220,7 +226,12 @@
     "tooLarge": "文件大于500KB，为保证性能，请右键下载后本地查看",
     "fileChangedOnServer": "文件在服务端已被修改，强制保存会覆盖远端内容，是否继续？",
     "overwrite": "强制覆盖",
-    "alreadyUploading": "{name} 正在上传中，请勿重复操作"
+    "alreadyUploading": "{name} 正在上传中，请勿重复操作",
+    "permissions": "权限",
+    "selectedCount": "已选择 {count} 项",
+    "dropHere": "松开鼠标即可上传文件",
+    "binaryPrompt": "该文件是二进制文件或无法直接预览，是否下载到本地？",
+    "textTooLarge": "该文本文件过大(>500KB)，为避免浏览器卡顿，请直接下载查看。"
   },
   "monitor": {
     "title": "服务器监控",

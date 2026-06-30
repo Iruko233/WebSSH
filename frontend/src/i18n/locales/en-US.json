@@ -3,7 +3,13 @@
     "title": "WebSSH",
     "lockVault": "Lock Vault",
     "wakingUp": "Waking up the vault..",
-    "about": "About WebSSH"
+    "about": "About WebSSH",
+    "version": "Version: {version}",
+    "checkingUpdate": "Checking for updates..",
+    "newVersion": "Update available: {version}",
+    "latestVersion": "Up to date",
+    "viewChangelog": "View Changelog",
+    "releaseNotes": "Release Notes"
   },
   "setup": {
     "welcomeBack": "Welcome Back",
@@ -220,7 +226,12 @@
     "tooLarge": "File is larger than 500KB, Please download it to view",
     "fileChangedOnServer": "The file has been modified on the server, Force saving will overwrite remote changes, Continue?",
     "overwrite": "Overwrite",
-    "alreadyUploading": "{name} is already uploading"
+    "alreadyUploading": "{name} is already uploading",
+    "permissions": "Permissions",
+    "selectedCount": "{count} selected",
+    "dropHere": "Drop files here to upload",
+    "binaryPrompt": "This is a binary file or cannot be previewed, Do you want to download it?",
+    "textTooLarge": "The text file is too large (>500KB) to view inline, Please download it."
   },
   "monitor": {
     "title": "Server Monitor",

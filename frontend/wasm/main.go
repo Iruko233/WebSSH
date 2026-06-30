@@ -639,10 +639,11 @@ func main() {
 						var res []interface{}
 						for _, f := range files {
 							res = append(res, map[string]interface{}{
-								"name":    f.Name(),
-								"isDir":   f.IsDir(),
-								"size":    f.Size(),
-								"modTime": f.ModTime().UnixMilli(),
+								"name":        f.Name(),
+								"isDir":       f.IsDir(),
+								"size":        f.Size(),
+								"modTime":     f.ModTime().UnixMilli(),
+								"permissions": f.Mode().String(),
 							})
 						}
 						return res, nil
@@ -657,10 +658,11 @@ func main() {
 							return nil, err
 						}
 						return map[string]interface{}{
-							"name":    stat.Name(),
-							"isDir":   stat.IsDir(),
-							"size":    stat.Size(),
-							"modTime": stat.ModTime().UnixMilli(),
+							"name":        stat.Name(),
+							"isDir":       stat.IsDir(),
+							"size":        stat.Size(),
+							"modTime":     stat.ModTime().UnixMilli(),
+							"permissions": stat.Mode().String(),
 						}, nil
 					})
 				}))

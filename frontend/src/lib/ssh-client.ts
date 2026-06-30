@@ -9,6 +9,7 @@ export interface FileInfo {
   isDir: boolean
   size: number
   modTime: number
+  permissions: string
 }
 
 export interface NetStats {
@@ -169,6 +170,16 @@ export class SSHConnection {
   }
   public async sftpRename(oldPath: string, newPath: string): Promise<void> {
     return await this.config?.sftpRename?.(oldPath, newPath)
+  }
+  public async sftpReadFirstBytes(path: string, length: number): Promise<Uint8Array> {
+    const handle = await this.config?.sftpOpenFile?.(path, "r")
+    if (handle == null) throw new Error("SFTP not initialized")
+    try {
+      const chunk = await this.config.sftpReadFile(handle, length)
+      return chunk || new Uint8Array(0)
+    } finally {
+      await this.config.sftpCloseFile(handle)
+    }
   }
   public async sftpRead(path: string): Promise<string> {
     const handle = await this.config?.sftpOpenFile?.(path, "r")
