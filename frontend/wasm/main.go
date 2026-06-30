@@ -400,10 +400,10 @@ func startMonitor(client *ssh.Client, config js.Value, interval float64) {
 		}
 
 		cmd := `awk '/^cpu / {idle=$5; total=0; for(i=2;i<=NF;i++) total+=$i; print "CPU", idle, total}' /proc/stat && ` +
-			`awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {print "MEM", t, a}' /proc/meminfo && ` +
-			`awk 'NR>2 {sub(/:/,"",$1); print "NET", $1, $2, $10}' /proc/net/dev && ` +
+			`awk '/MemTotal:/{t=$2} /MemFree:/{f=$2} /Buffers:/{b=$2} /^Cached:/{c=$2} /MemAvailable:/{a=$2} END{print "MEM", t, (a==""?f+b+c:a)}' /proc/meminfo && ` +
+			`awk 'NR>2 {sub(/:/," "); print "NET", $1, $2, $10}' /proc/net/dev && ` +
 			`awk '$4 == "01" {c++} END {print "TCP", c+0}' /proc/net/tcp 2>/dev/null || echo "TCP 0"; ` +
-			`awk 'END {print "UDP", NR>1?NR-1:0}' /proc/net/udp 2>/dev/null || echo "UDP 0"`
+			`awk 'END {print "UDP", (NR>1?NR-1:0)}' /proc/net/udp 2>/dev/null || echo "UDP 0"`
 
 		out, err := session.Output(cmd)
 		session.Close()
