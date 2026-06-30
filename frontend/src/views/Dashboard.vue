@@ -4,8 +4,10 @@
     <aside class="sidebar hidden-mobile">
       <div class="sidebar-header">
         <div class="logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="logo-icon">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 15V9a2 2 0 012-2h12a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2z" />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="logo-icon">
+            <rect x="2" y="3" width="20" height="18" rx="4" ry="4" />
+            <polyline points="7 8 12 12 7 16" />
+            <line x1="14" y1="16" x2="18" y2="16" />
           </svg>
           <span class="logo-text">{{ $t('app.title') }}</span>
         </div>
@@ -96,8 +98,10 @@
       <div class="sidebar" style="width: 100%; height: 100%; border: none;">
         <div class="sidebar-header">
           <div class="logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="logo-icon">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 15V9a2 2 0 012-2h12a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2z" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="logo-icon">
+              <rect x="2" y="3" width="20" height="18" rx="4" ry="4" />
+              <polyline points="7 8 12 12 7 16" />
+              <line x1="14" y1="16" x2="18" y2="16" />
             </svg>
             <span class="logo-text">{{ $t('app.title') }}</span>
           </div>

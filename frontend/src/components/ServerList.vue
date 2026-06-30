@@ -225,7 +225,6 @@ const confirmDelete = (id: string) => {
 .server-host {
   font-size: 0.75rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
