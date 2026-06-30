@@ -33,8 +33,7 @@
           size="large"
         />
       </el-form-item>
-      
-      <el-form-item :label="$t('serverForm.port')" required class="flex-1">
+      <el-form-item :label="$t('serverForm.port')" class="flex-1">
         <el-input-number 
           v-model="form.port" 
           :min="1" 
@@ -163,13 +162,14 @@ const handleSubmit = async () => {
   }
 
   const finalName = form.value.name.trim() || form.value.host.trim()
+  const finalPort = form.value.port || 22
 
   isLoading.value = true
   try {
     const credentials = {
       group: form.value.group || undefined,
       host: form.value.host,
-      port: form.value.port,
+      port: finalPort,
       username: form.value.username,
       password: form.value.password,
       expectedHostKey: form.value.expectedHostKey
