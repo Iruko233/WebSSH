@@ -39,6 +39,7 @@
 - **单密码认证**：无需用户名，一个主密码解锁一切
 - **可自定义加密强度**：标准 / 高 / 偏执 三档 + 自定义
 - **密码不落盘**：密钥仅存 sessionStorage，关浏览器即失效
+- **部署灵活**：既可以本地运行当作普通的 SSH 客户端，也可以部署在 NAS 或服务器上作为 Web 跳板机，方便在浏览器随时随地管理服务器
 - **单二进制部署**：前端内嵌，一个文件即可运行
 - **移动端适配**：包含专为手机优化的带 Ctrl/Alt 组合键的虚拟键盘
 - **浏览器终端**：基于 xterm.js
@@ -166,6 +167,7 @@ A zero-knowledge Web SSH management tool based on browser-side Go WASM, all serv
 - **Single Password Authentication**: No username required, a single master password unlocks everything
 - **Customizable Encryption Strength**: Standard / High / Paranoid tiers + Custom
 - **Password Never Touches Disk**: Keys are only stored in sessionStorage, becoming invalid as soon as the browser is closed
+- **Flexible Use Cases**: Run it locally as a regular SSH client, or deploy it on a NAS or server as a Web jump server to access your machines remotely from any browser
 - **Single Binary Deployment**: Frontend is embedded, runs from a single file
 - **Mobile Friendly**: Includes a virtual keyboard optimized for mobile with Ctrl/Alt modifier keys
 - **Browser Terminal**: Based on xterm.js
