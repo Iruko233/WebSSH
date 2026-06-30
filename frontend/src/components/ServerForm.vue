@@ -6,7 +6,7 @@
     class="server-form"
   >
     <div class="form-row">
-      <el-form-item :label="$t('serverForm.serverAlias')" required class="flex-2">
+      <el-form-item :label="$t('serverForm.serverAlias')" class="flex-2">
         <el-input 
           v-model="form.name" 
           :placeholder="$t('serverForm.aliasPlaceholder')" 
@@ -157,10 +157,12 @@ watch(() => props.server, (newServer) => {
 }, { immediate: true })
 
 const handleSubmit = async () => {
-  if (!form.value.name || !form.value.host || !form.value.username) {
-    ElMessage.warning(t('serverForm.fillRequired'))
+  if (!form.value.host || !form.value.username) {
+    ElMessage.error(t('serverForm.fillRequired'))
     return
   }
+
+  const finalName = form.value.name.trim() || form.value.host.trim()
 
   isLoading.value = true
   try {
@@ -174,10 +176,10 @@ const handleSubmit = async () => {
     }
 
     if (props.server) {
-      await serverStore.updateServer(props.server.id, form.value.name, credentials)
+      await serverStore.updateServer(props.server.id, finalName, credentials)
       ElMessage.success(t('serverForm.updateSuccess'))
     } else {
-      await serverStore.addServer(form.value.name, credentials)
+      await serverStore.addServer(finalName, credentials)
       ElMessage.success(t('serverForm.addSuccess'))
     }
     emit('success')
