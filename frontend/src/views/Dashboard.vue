@@ -230,7 +230,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, Monitor, Setting, Lock, Key, Reading, Check, Operation, Finished, Upload, Download, Delete, Close } from '@element-plus/icons-vue'
+import { Plus, Monitor, Setting, Lock, Key, Reading, Operation, Upload, Download, Delete, MoreFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import ServerList from '../components/ServerList.vue'
