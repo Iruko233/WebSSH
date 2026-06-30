@@ -1,13 +1,12 @@
 <template>
   <el-icon :size="size" :class="customClass" :style="{ color }">
     <Icon v-if="osIconName" :icon="osIconName" />
-    <Cpu v-else />
+    <Icon v-else icon="lucide:server" />
   </el-icon>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Cpu } from '@element-plus/icons-vue'
 import { Icon } from '@iconify/vue'
 
 const props = defineProps<{

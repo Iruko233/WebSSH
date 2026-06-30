@@ -27,17 +27,19 @@
           </el-button>
         </el-tooltip>
 
-        <el-button
-          class="stats-toggle"
-          :type="showStats ? 'primary' : 'default'"
-          @click="showStats = !showStats"
-          circle
-        >
-          <span v-if="!sysStats" class="pulse-dot"></span>
-          <el-icon v-else><Odometer /></el-icon>
-        </el-button>
+        <el-tooltip :content="t('monitor.title')" placement="left">
+          <el-button
+            class="stats-toggle"
+            :type="showStats ? 'primary' : 'default'"
+            @click="showStats = !showStats"
+            circle
+          >
+            <span v-if="!sysStats" class="pulse-dot"></span>
+            <el-icon v-else><Odometer /></el-icon>
+          </el-button>
+        </el-tooltip>
 
-        <el-tooltip content="Toggle File Manager" placement="left">
+        <el-tooltip :content="t('terminal.toggleFileManager')" placement="left">
           <el-button 
             class="sftp-toggle" 
             :type="showSftp ? 'primary' : 'default'"
@@ -67,12 +69,12 @@
           type="textarea"
           :rows="2"
           resize="none"
-          :placeholder="t('terminal.commandPlaceholder') || 'Type command here... Press Ctrl+Enter to send'"
+          :placeholder="t('terminal.commandPlaceholder')"
           @keydown.ctrl.enter.prevent="sendCommand"
           class="command-input"
         />
-        <el-button type="primary" class="command-send-btn" @click="sendCommand">
-          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <el-button type="primary" class="command-send-btn" @click="sendCommand" circle>
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-left: -2px; margin-top: 2px;">
             <polyline points="9 10 4 15 9 20"></polyline>
             <path d="M20 4v7a4 4 0 0 1-4 4H4"></path>
           </svg>
@@ -612,14 +614,13 @@ watch(showCommandBar, () => {
   top: 16px;
   right: 56px;
   width: 240px;
-  background: color-mix(in srgb, var(--term-bg, #1e1e24) 85%, transparent);
-  border: 1px solid color-mix(in srgb, var(--term-fg, #abb2bf) 15%, transparent);
-  border-radius: 8px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   z-index: 10;
   padding: 12px;
-  backdrop-filter: blur(12px);
-  color: var(--term-fg, #abb2bf);
+  color: var(--text-primary);
 }
 
 .stats-panel-header {
@@ -629,16 +630,16 @@ watch(showCommandBar, () => {
   margin-bottom: 8px;
   font-weight: 600;
   font-size: 14px;
-  color: var(--term-fg, #abb2bf);
+  color: var(--text-primary);
 }
 
 .stats-panel-header .el-button {
-  color: color-mix(in srgb, var(--term-fg, #abb2bf) 60%, transparent) !important;
+  color: var(--text-secondary) !important;
 }
 
 .stats-panel-header .el-button:hover {
-  color: var(--term-fg, #abb2bf) !important;
-  background: color-mix(in srgb, var(--term-fg, #abb2bf) 10%, transparent) !important;
+  color: var(--text-primary) !important;
+  background: var(--bg-primary) !important;
 }
 
 .stats-slide-enter-active,
@@ -706,11 +707,11 @@ watch(showCommandBar, () => {
 
 .command-bar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 12px;
   padding: 12px;
-  background-color: color-mix(in srgb, var(--term-bg, #1e1e24) 95%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--term-fg, #abb2bf) 15%, transparent);
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   z-index: 10;
 }
@@ -720,27 +721,39 @@ watch(showCommandBar, () => {
 }
 
 .command-input :deep(.el-textarea__inner) {
-  background-color: color-mix(in srgb, var(--term-bg, #1e1e24) 90%, #fff 10%);
-  color: var(--term-fg, #abb2bf);
-  border-color: color-mix(in srgb, var(--term-fg, #abb2bf) 20%, transparent);
-  font-family: var(--font-mono);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  font-family: var(--font-sans);
   box-shadow: none;
 }
 
 .command-input :deep(.el-textarea__inner:focus) {
-  border-color: var(--term-cursor, #528bff);
-  background-color: color-mix(in srgb, var(--term-bg, #1e1e24) 85%, #fff 15%);
+  border-color: var(--color-primary);
+  background-color: var(--bg-secondary);
 }
 
 .command-send-btn {
-  height: 48px;
-  width: 48px;
-  min-width: 48px;
-  border-radius: 8px;
+  height: 44px;
+  width: 44px;
+  min-width: 44px;
+  border-radius: 50% !important;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3) !important;
+  transition: all 0.3s ease !important;
+}
+
+.command-send-btn:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4) !important;
+}
+
+.command-send-btn:active {
+  transform: translateY(0) scale(0.95);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2) !important;
 }
 </style>

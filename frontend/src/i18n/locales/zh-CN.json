@@ -141,7 +141,8 @@
     "hostKeyPromptReject": "取消",
     "hostKeyAccepted": "已接受新主机指纹并存入保险库，正在重新连接...",
     "commandBar": "快捷命令栏",
-    "commandPlaceholder": "在此输入命令（多行）... 按 Ctrl+Enter 发送到终端"
+    "commandPlaceholder": "在此输入快捷命令 (按 Ctrl+Enter 发送)",
+    "toggleFileManager": "文件管理器"
   },
   "settings": {
     "title": "全局设置",

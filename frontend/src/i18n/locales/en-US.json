@@ -140,8 +140,9 @@
     "hostKeyPromptAccept": "Accept and Connect",
     "hostKeyPromptReject": "Cancel",
     "hostKeyAccepted": "New host key accepted and saved to vault, Reconnecting..",
-    "commandBar": "Command Compose Box",
-    "commandPlaceholder": "Type command here... Press Ctrl+Enter to send"
+    "commandBar": "Quick Command Bar",
+    "commandPlaceholder": "Enter quick command here (Press Ctrl+Enter to send)",
+    "toggleFileManager": "Toggle File Manager"
   },
   "settings": {
     "title": "Global Settings",
