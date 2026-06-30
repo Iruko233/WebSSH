@@ -54,7 +54,7 @@ func main() {
 
 	// CSP
 	r.Use(func(c *gin.Context) {
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' ws: wss: https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' ws: wss: https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com https://api.github.com")
 		c.Next()
 	})
 
