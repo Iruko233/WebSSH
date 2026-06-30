@@ -11,11 +11,58 @@
           </svg>
           <span class="logo-text">{{ $t('app.title') }}</span>
         </div>
-        <el-button type="primary" :icon="Plus" circle size="small" @click="showAddServer = true" />
+        <div class="sidebar-actions">
+          <el-tooltip :content="$t('serverForm.addTitle') || 'Add'" placement="bottom" :show-after="500">
+            <button class="header-action-btn" @click="showAddServer = true">
+              <el-icon><Plus /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip :content="$t('dashboard.batchSelect') || 'Batch'" placement="bottom" :show-after="500">
+            <button class="header-action-btn" :class="{ 'is-active': isSelectMode }" @click="toggleSelectMode">
+              <el-icon><Operation /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-dropdown trigger="click" @command="handleManageCommand">
+            <button class="header-action-btn">
+              <el-icon><MoreFilled /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="import" :icon="Download">{{ $t('dashboard.importServers') || '导入配置' }}</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </div>
       
+      <!-- Batch Action Toolbar -->
+      <div class="batch-toolbar" v-if="isSelectMode">
+        <el-checkbox 
+          :model-value="isAllSelected" 
+          :indeterminate="isIndeterminate" 
+          @change="handleSelectAll"
+          class="batch-checkbox"
+        >
+          {{ $t('dashboard.selectAll') || '全选' }} ({{ selectedServerIds.size }})
+        </el-checkbox>
+        <div class="batch-toolbar-actions">
+          <el-tooltip :content="$t('dashboard.exportSelected') || 'Export'" placement="bottom" :show-after="500">
+            <el-button size="small" text :icon="Upload" :disabled="selectedServerIds.size === 0" @click="handleExportSelected" />
+          </el-tooltip>
+          <el-tooltip :content="$t('serverList.deleteBtn') || 'Delete'" placement="bottom" :show-after="500">
+            <el-button size="small" type="danger" text :icon="Delete" :disabled="selectedServerIds.size === 0" @click="handleBatchDelete" />
+          </el-tooltip>
+        </div>
+      </div>
+
       <div class="sidebar-content">
-        <ServerList @connect="handleConnect" @edit="editServer" compact />
+        <ServerList 
+          @connect="handleConnect" 
+          @edit="editServer" 
+          :is-select-mode="isSelectMode"
+          v-model:selected-ids="selectedServerIds"
+          compact 
+        />
       </div>
 
       <div class="sidebar-footer">
@@ -64,7 +111,6 @@
               {{ tab.title }}
             </div>
           </template>
-          <!-- Using v-show inside the component wrapper if needed, but el-tab-pane handles keep-alive by default with DOM if not destroyed -->
           <div class="terminal-pane-inner">
             <Terminal :server-id="tab.serverId" :tab-id="tab.id" @toggle-sidebar="showMobileSidebar = true" />
           </div>
@@ -87,6 +133,9 @@
     <VaultSecurityDialog v-model="showSecurity" />
     <AboutDialog v-model="showAbout" />
 
+    <!-- File Input for Import -->
+    <input type="file" ref="fileInput" accept=".json,.csv" style="display: none" @change="handleFileImport">
+
     <!-- Mobile Drawer Sidebar -->
     <el-drawer 
       v-model="showMobileSidebar" 
@@ -105,11 +154,58 @@
             </svg>
             <span class="logo-text">{{ $t('app.title') }}</span>
           </div>
-          <el-button type="primary" :icon="Plus" circle size="small" @click="showAddServer = true" />
+          <div class="sidebar-actions">
+            <el-tooltip :content="$t('serverForm.addTitle') || 'Add'" placement="bottom" :show-after="500">
+              <button class="header-action-btn" @click="showAddServer = true">
+                <el-icon><Plus /></el-icon>
+              </button>
+            </el-tooltip>
+            <el-tooltip :content="$t('dashboard.batchSelect') || 'Batch'" placement="bottom" :show-after="500">
+              <button class="header-action-btn" :class="{ 'is-active': isSelectMode }" @click="toggleSelectMode">
+                <el-icon><Operation /></el-icon>
+              </button>
+            </el-tooltip>
+            <el-dropdown trigger="click" @command="handleManageCommand">
+              <button class="header-action-btn">
+                <el-icon><MoreFilled /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="import" :icon="Download">{{ $t('dashboard.importServers') || '导入配置' }}</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </div>
         
+        <!-- Batch Action Toolbar -->
+        <div class="batch-toolbar" v-if="isSelectMode">
+          <el-checkbox 
+            :model-value="isAllSelected" 
+            :indeterminate="isIndeterminate" 
+            @change="handleSelectAll"
+            class="batch-checkbox"
+          >
+            {{ $t('dashboard.selectAll') || '全选' }} ({{ selectedServerIds.size }})
+          </el-checkbox>
+          <div class="batch-toolbar-actions">
+            <el-tooltip :content="$t('dashboard.exportSelected') || 'Export'" placement="bottom" :show-after="500">
+              <el-button size="small" text :icon="Upload" :disabled="selectedServerIds.size === 0" @click="handleExportSelected" />
+            </el-tooltip>
+            <el-tooltip :content="$t('serverList.deleteBtn') || 'Delete'" placement="bottom" :show-after="500">
+              <el-button size="small" type="danger" text :icon="Delete" :disabled="selectedServerIds.size === 0" @click="handleBatchDelete" />
+            </el-tooltip>
+          </div>
+        </div>
+
         <div class="sidebar-content">
-          <ServerList @connect="handleConnect" @edit="editServer" compact />
+          <ServerList 
+            @connect="handleConnect" 
+            @edit="editServer" 
+            :is-select-mode="isSelectMode"
+            v-model:selected-ids="selectedServerIds"
+            compact 
+          />
         </div>
 
         <div class="sidebar-footer">
@@ -132,9 +228,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, Monitor, Setting, Lock, Key, Reading } from '@element-plus/icons-vue'
+import { Plus, Monitor, Setting, Lock, Key, Reading, Check, Operation, Finished, Upload, Download, Delete, Close } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import ServerList from '../components/ServerList.vue'
 import ServerForm from '../components/ServerForm.vue'
 import Terminal from '../components/Terminal.vue'
@@ -143,11 +241,14 @@ import VaultSecurityDialog from '../components/VaultSecurityDialog.vue'
 import AboutDialog from '../components/AboutDialog.vue'
 import { useTerminalStore } from '../stores/terminal'
 import { useAuthStore } from '../stores/auth'
+import { useServerStore } from '../stores/server'
 import type { DecryptedServer } from '../stores/server'
 
 const terminalStore = useTerminalStore()
 const authStore = useAuthStore()
+const serverStore = useServerStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const showAddServer = ref(false)
 const showSettings = ref(false)
@@ -155,6 +256,125 @@ const showSecurity = ref(false)
 const showAbout = ref(false)
 const showMobileSidebar = ref(false)
 const editingServer = ref<DecryptedServer | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+const isSelectMode = ref(false)
+const selectedServerIds = ref<Set<string>>(new Set())
+
+const isAllSelected = computed(() => serverStore.servers.length > 0 && selectedServerIds.value.size === serverStore.servers.length)
+const isIndeterminate = computed(() => selectedServerIds.value.size > 0 && selectedServerIds.value.size < serverStore.servers.length)
+
+const handleSelectAll = (val: boolean | string | number) => {
+  if (val) {
+    selectedServerIds.value = new Set(serverStore.servers.map(s => s.id))
+  } else {
+    selectedServerIds.value.clear()
+  }
+}
+
+const toggleSelectMode = () => {
+  isSelectMode.value = !isSelectMode.value
+  if (!isSelectMode.value) {
+    selectedServerIds.value.clear()
+  }
+}
+
+const handleManageCommand = (command: string) => {
+  if (command === 'import') {
+    fileInput.value?.click()
+  }
+}
+
+const handleExportSelected = () => {
+  if (selectedServerIds.value.size === 0) return
+  try {
+    serverStore.exportServersJSON(Array.from(selectedServerIds.value))
+    ElMessage.success(t('dashboard.exportSuccess') || 'Export successful')
+    isSelectMode.value = false
+    selectedServerIds.value.clear()
+  } catch (err: any) {
+    ElMessage.error(err.message || 'Failed to export')
+  }
+}
+
+const handleFileImport = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    try {
+      const content = e.target?.result as string
+      let jsonStr = content
+      if (file.name.endsWith('.csv')) {
+        const lines = content.split('\n').map(l => l.trim()).filter(Boolean)
+        const servers = lines.slice(1).map(line => {
+          const parts = line.split(',').map(p => p.trim())
+          const [group, name, host, port, username, password] = parts
+          return { group, name, host, port, username, password }
+        })
+        jsonStr = JSON.stringify(servers)
+      }
+
+      // Check conflicts
+      const result = await serverStore.importServersJSON(jsonStr, 'dry-run')
+      if (result.conflicts > 0) {
+        ElMessageBox.confirm(
+          t('dashboard.importConflictMsg', { count: result.total, conflicts: result.conflicts }) || `Found ${result.conflicts} conflicting servers. How do you want to proceed?`,
+          t('dashboard.importConflictTitle') || 'Import Conflicts',
+          {
+            distinguishCancelAndClose: true,
+            confirmButtonText: t('dashboard.overwriteBtn') || 'Overwrite',
+            cancelButtonText: t('dashboard.skipBtn') || 'Skip Conflicting',
+            type: 'warning'
+          }
+        ).then(async () => {
+          // Overwrite
+          await serverStore.importServersJSON(jsonStr, 'overwrite')
+          ElMessage.success(t('dashboard.importSuccess', { count: result.total }) || `Successfully imported ${result.total} servers`)
+        }).catch(async (action) => {
+          if (action === 'cancel') {
+            // Skip
+            await serverStore.importServersJSON(jsonStr, 'skip')
+            ElMessage.success(t('dashboard.importSuccess', { count: result.total - result.conflicts }) || `Successfully imported ${result.total - result.conflicts} servers`)
+          }
+        })
+      } else {
+        await serverStore.importServersJSON(jsonStr, 'overwrite')
+        ElMessage.success(t('dashboard.importSuccess', { count: result.total }) || `Successfully imported ${result.total} servers`)
+      }
+    } catch (err: any) {
+      ElMessage.error(err.message || 'Failed to import')
+    } finally {
+      if (target) target.value = ''
+    }
+  }
+  reader.readAsText(file)
+}
+
+const handleBatchDelete = () => {
+  if (selectedServerIds.value.size === 0) return
+  ElMessageBox.confirm(
+    t('dashboard.batchDeleteConfirm', { count: selectedServerIds.value.size }),
+    t('dashboard.batchDeleteTitle', 'Delete Servers'),
+    {
+      confirmButtonText: t('serverList.deleteBtn') || 'Delete',
+      cancelButtonText: t('serverList.cancelBtn') || 'Cancel',
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger'
+    }
+  ).then(async () => {
+    try {
+      await serverStore.batchDeleteServers(Array.from(selectedServerIds.value))
+      ElMessage.success(t('dashboard.batchDeleteSuccess', 'Servers deleted'))
+      isSelectMode.value = false
+      selectedServerIds.value.clear()
+    } catch (err: any) {
+      ElMessage.error(err.message || 'Failed to delete servers')
+    }
+  }).catch(() => {})
+}
 
 let lastConnectTime = 0
 const handleConnect = (serverId: string) => {
@@ -215,6 +435,47 @@ const handleLogout = () => {
   border-bottom: 1px solid var(--border-color);
 }
 
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.header-action-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: rgba(128, 128, 128, 0.1);
+  color: var(--text-secondary);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  outline: none;
+  font-size: 16px;
+}
+
+.header-action-btn:hover {
+  background-color: rgba(var(--el-color-primary-rgb), 0.15);
+  color: var(--el-color-primary);
+  transform: translateY(-1px);
+}
+
+.header-action-btn.is-active, 
+.header-action-btn.primary {
+  background-color: rgba(var(--el-color-primary-rgb), 0.1);
+  color: var(--el-color-primary);
+}
+
+.header-action-btn.primary:hover {
+  background-color: var(--el-color-primary);
+  color: #ffffff;
+}
+
 .logo {
   display: flex;
   align-items: center;
@@ -242,9 +503,38 @@ const handleLogout = () => {
 .sidebar-footer {
   display: flex;
   justify-content: space-around;
+  align-items: center;
   padding: 12px;
   border-top: 1px solid var(--border-color);
   background-color: var(--bg-secondary);
+  height: 64px;
+  box-sizing: border-box;
+}
+
+.batch-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.batch-checkbox {
+  margin-right: 12px;
+}
+
+.batch-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.batch-toolbar-actions .el-button {
+  margin: 0;
+}
+
+.btn-text {
+  margin-left: 4px;
 }
 
 .footer-btn {

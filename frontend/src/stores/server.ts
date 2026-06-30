@@ -120,6 +120,115 @@ export const useServerStore = defineStore('server', {
       await this.fetchServers()
     },
 
+    async batchDeleteServers(ids: string[]) {
+      await Promise.all(ids.map(id => api.deleteServer(id)))
+      await this.fetchServers()
+    },
+
+    exportServersJSON(ids?: string[]) {
+      const serversToExport = ids && ids.length > 0
+        ? this.servers.filter(s => ids.includes(s.id))
+        : this.servers
+
+      const data = {
+        version: 1,
+        servers: serversToExport.map(s => ({
+          name: s.name,
+          group: s.credentials.group,
+          host: s.credentials.host,
+          port: s.credentials.port,
+          username: s.credentials.username,
+          password: s.credentials.password,
+          os: s.credentials.os,
+          expectedHostKey: s.credentials.expectedHostKey
+        }))
+      }
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const dateStr = new Date().toISOString().split('T')[0]
+      const randomId = crypto.randomUUID().split('-')[0] // short 8 chars uuid
+      a.download = `webssh_servers_${dateStr}_${randomId}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    },
+
+    async importServersJSON(jsonStr: string, mode: 'dry-run' | 'overwrite' | 'skip') {
+      try {
+        const data = JSON.parse(jsonStr)
+        let serversToImport: any[] = []
+        if (data.version === 1 && Array.isArray(data.servers)) {
+          serversToImport = data.servers
+        } else if (Array.isArray(data)) {
+          serversToImport = data // allow raw array import
+        } else {
+          throw new Error('Invalid backup file format')
+        }
+        
+        const authStore = useAuthStore()
+        if (!authStore.encKey) throw new Error('Encryption key not loaded')
+        
+        let importedCount = 0
+        let conflictsCount = 0
+        
+        for (const srv of serversToImport) {
+          if (!srv.host || !srv.username) continue
+          
+          const srvPort = Number(srv.port) || 22
+          const existing = this.servers.find(
+            s => s.credentials.host === srv.host && 
+                 s.credentials.port === srvPort && 
+                 s.credentials.username === srv.username
+          )
+          
+          if (existing) {
+            conflictsCount++
+            if (mode === 'dry-run') continue
+            if (mode === 'skip') continue
+          } else {
+            if (mode === 'dry-run') continue
+          }
+          
+          const credentials = {
+            group: srv.group || undefined,
+            host: srv.host,
+            port: srvPort,
+            username: srv.username,
+            password: srv.password || '',
+            os: srv.os,
+            expectedHostKey: srv.expectedHostKey
+          }
+          
+          const now = new Date().toISOString()
+          
+          if (existing && mode === 'overwrite') {
+            const createdAt = existing.credentials.createdAt || now
+            const credentialsWithname = { ...credentials, name: srv.name || srv.host, createdAt, updatedAt: now }
+            const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
+            await api.updateServer(existing.id, { encryptedData, iv })
+            importedCount++
+          } else {
+            const credentialsWithname = { ...credentials, name: srv.name || srv.host, createdAt: now, updatedAt: now }
+            const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
+            await api.createServer({ encryptedData, iv })
+            importedCount++
+          }
+        }
+        
+        if (mode !== 'dry-run') {
+          await this.fetchServers()
+        }
+        
+        return { total: serversToImport.length, conflicts: conflictsCount, imported: importedCount }
+      } catch (err: any) {
+        throw new Error('Failed to import servers: ' + err.message)
+      }
+    },
+
     async reEncryptAll(newKey: CryptoKey): Promise<import('../types').RekeyServerEntry[]> {
       if (this.servers.length === 0 && !this.isLoading && !this.error) {
         // Might be truly empty, but let's ensure it's loaded

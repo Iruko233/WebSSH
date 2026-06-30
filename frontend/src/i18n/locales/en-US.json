@@ -65,7 +65,20 @@
   },
   "dashboard": {
     "openServerList": "Open Server List",
-    "noActiveSession": "No Active Sessions"
+    "noActiveSession": "No Active Sessions",
+    "batchDeleteConfirm": "Are you sure you want to delete {count} selected servers?",
+    "batchDeleteTitle": "Delete Servers",
+    "batchDeleteSuccess": "Servers deleted successfully",
+    "batchSelect": "Batch Manage",
+    "importServers": "Import Servers",
+    "exportSelected": "Export Selected",
+    "exportSuccess": "Export successful",
+    "importConflictTitle": "Import Conflicts",
+    "importConflictMsg": "Found {count} servers to import, but {conflicts} servers already exist. How do you want to proceed?",
+    "overwriteBtn": "Overwrite",
+    "skipBtn": "Skip Conflicting",
+    "importSuccess": "Successfully imported {count} servers",
+    "selectAll": "Select All"
   },
   "serverList": {
     "noServers": "No Servers Yet",
@@ -77,7 +90,8 @@
     "cancelBtn": "Cancel",
     "deleteSuccess": "Deleted successfully",
     "deleteFailed": "Failed to delete",
-    "uncategorized": "Uncategorized"
+    "uncategorized": "Uncategorized",
+    "selectedCount": "{count} selected"
   },
   "security": {
     "title": "Security & Encryption",
@@ -172,7 +186,12 @@
     "kwOk": "Highlight OK / Success (Green)",
     "kwInfo": "Highlight Info (Blue)",
     "kwDebug": "Highlight Debug (Purple)",
-    "kwIpMac": "Highlight IP & MAC addresses (Pink)"
+    "kwIpMac": "Highlight IP & MAC addresses (Pink)",
+    "dataManagement": "Data Management",
+    "exportBackup": "Export Backup",
+    "exportDesc": "Export all server configurations to a secure JSON backup file",
+    "importBackup": "Import Backup",
+    "importDesc": "Restore servers from a previous JSON or CSV backup file"
   },
   "kdf": {
     "argon2id": {

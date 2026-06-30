@@ -359,6 +359,4 @@ const saveSettings = () => {
 .kw-checkbox.is-checked.kw-debug :deep(.el-checkbox__label) { color: #b39ddb; }
 
 .kw-checkbox.is-checked.kw-ip :deep(.el-checkbox__inner) { background-color: #f48fb1; border-color: #f48fb1; }
-.kw-checkbox.is-checked.kw-ip.is-bordered { border-color: rgba(244, 143, 177, 0.4); background-color: rgba(244, 143, 177, 0.05); }
-.kw-checkbox.is-checked.kw-ip :deep(.el-checkbox__label) { color: #f48fb1; }
 </style>

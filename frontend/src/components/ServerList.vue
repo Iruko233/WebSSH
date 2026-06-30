@@ -23,24 +23,33 @@
             v-for="server in servers" 
             :key="server.id" 
             class="server-item"
-            @click="$emit('connect', server.id)"
+            :class="{ 'is-selected': isSelectMode && selectedIds?.has(server.id) }"
+            @click="handleItemClick(server.id)"
           >
+            <div class="server-checkbox-wrapper" :class="{ 'is-visible': isSelectMode }" @click.stop>
+              <el-checkbox 
+                :model-value="selectedIds?.has(server.id)" 
+                @update:model-value="toggleSelection(server.id)"
+              />
+            </div>
+
             <div class="server-icon-wrapper">
-              <OsIcon :os="server.credentials.os" />
+              <OsIcon :os="server.credentials.os" size="24" />
             </div>
             <div class="server-info">
               <div class="server-name">{{ server.name }}</div>
               <div class="server-host">{{ server.credentials.username }}@{{ server.credentials.host }}</div>
             </div>
             
-            <div class="server-actions" @click.stop>
-              <el-dropdown trigger="click" @command="handleCommand($event, server)">
+            <div v-if="!isSelectMode" class="server-actions" @click.stop>
+              <el-dropdown trigger="click" placement="bottom-end" @command="handleCommand($event, server)">
                 <el-button size="small" text class="action-btn">
                   <el-icon><MoreFilled /></el-icon>
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="edit" :icon="Edit">{{ $t('serverList.edit') }}</el-dropdown-item>
+                    <el-dropdown-item command="export" :icon="Upload">{{ $t('dashboard.exportSelected') || 'Export' }}</el-dropdown-item>
                     <el-dropdown-item command="delete" :icon="Delete" divided class="danger-item">{{ $t('serverList.deleteServer') }}</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -57,16 +66,23 @@
 import { onMounted, ref, watch } from 'vue'
 import { useServerStore } from '../stores/server'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Monitor, MoreFilled, Edit, Delete } from '@element-plus/icons-vue'
+import { Monitor, MoreFilled, Edit, Delete, Upload } from '@element-plus/icons-vue'
 import OsIcon from './OsIcon.vue'
 import { useI18n } from 'vue-i18n'
 
 const serverStore = useServerStore()
 const { t } = useI18n()
 
+const props = defineProps<{
+  compact?: boolean
+  isSelectMode?: boolean
+  selectedIds?: Set<string>
+}>()
+
 const emit = defineEmits<{
   (e: 'connect', id: string): void
   (e: 'edit', server: any): void
+  (e: 'update:selectedIds', ids: Set<string>): void
 }>()
 
 const activeNames = ref<string[]>([])
@@ -81,9 +97,35 @@ onMounted(async () => {
   await serverStore.fetchServers()
 })
 
+const toggleSelection = (id: string) => {
+  if (!props.isSelectMode || !props.selectedIds) return
+  const newSet = new Set(props.selectedIds)
+  if (newSet.has(id)) {
+    newSet.delete(id)
+  } else {
+    newSet.add(id)
+  }
+  emit('update:selectedIds', newSet)
+}
+
+const handleItemClick = (id: string) => {
+  if (props.isSelectMode) {
+    toggleSelection(id)
+  } else {
+    emit('connect', id)
+  }
+}
+
 const handleCommand = (command: string, row: any) => {
   if (command === 'edit') {
     emit('edit', row)
+  } else if (command === 'export') {
+    try {
+      serverStore.exportServersJSON([row.id])
+      ElMessage.success(t('dashboard.exportSuccess') || 'Export successful')
+    } catch (err: any) {
+      ElMessage.error(err.message || 'Failed to export')
+    }
   } else if (command === 'delete') {
     confirmDelete(row.id)
   }
@@ -180,8 +222,12 @@ const confirmDelete = (id: string) => {
   gap: 12px;
   cursor: pointer;
   border-bottom: 1px solid var(--border-color);
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   background-color: var(--bg-primary);
+}
+
+.server-item.is-selected {
+  background-color: rgba(var(--el-color-primary-rgb), 0.05);
 }
 
 .server-item:last-child {
@@ -190,6 +236,20 @@ const confirmDelete = (id: string) => {
 
 .server-item:hover {
   background-color: var(--bg-primary);
+}
+
+.server-checkbox-wrapper {
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+}
+
+.server-checkbox-wrapper.is-visible {
+  width: 24px;
+  opacity: 1;
 }
 
 .server-icon-wrapper {
@@ -203,6 +263,7 @@ const confirmDelete = (id: string) => {
   justify-content: center;
   color: var(--text-secondary);
   flex-shrink: 0;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .server-info {

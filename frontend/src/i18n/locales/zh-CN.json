@@ -65,7 +65,20 @@
   },
   "dashboard": {
     "openServerList": "打开服务器列表",
-    "noActiveSession": "暂无活跃会话"
+    "noActiveSession": "暂无活跃会话",
+    "batchDeleteConfirm": "确定要删除选中的 {count} 个服务器吗？",
+    "batchDeleteTitle": "批量删除服务器",
+    "batchDeleteSuccess": "批量删除成功",
+    "batchSelect": "批量管理",
+    "importServers": "导入配置",
+    "exportSelected": "导出所选",
+    "exportSuccess": "导出成功",
+    "importConflictTitle": "导入冲突",
+    "importConflictMsg": "准备导入 {count} 个服务器，但发现 {conflicts} 个已存在的冲突项。您希望如何处理？",
+    "overwriteBtn": "覆盖更新",
+    "skipBtn": "跳过冲突",
+    "importSuccess": "成功导入 {count} 个服务器",
+    "selectAll": "全选"
   },
   "serverList": {
     "noServers": "暂无服务器",
@@ -77,7 +90,8 @@
     "cancelBtn": "取消",
     "deleteSuccess": "删除成功",
     "deleteFailed": "删除失败",
-    "uncategorized": "未分组"
+    "uncategorized": "未分组",
+    "selectedCount": "已选择 {count} 项"
   },
   "security": {
     "title": "安全与加密",
@@ -172,7 +186,12 @@
     "kwOk": "高亮 OK / Success (绿色)",
     "kwInfo": "高亮 Info (蓝色)",
     "kwDebug": "高亮 Debug (紫色)",
-    "kwIpMac": "高亮 IP & MAC 地址 (粉色)"
+    "kwIpMac": "高亮 IP & MAC 地址 (粉色)",
+    "dataManagement": "数据管理",
+    "exportBackup": "导出备份",
+    "exportDesc": "将所有服务器配置导出为安全的 JSON 备份文件",
+    "importBackup": "导入备份",
+    "importDesc": "从之前的 JSON 或 CSV 备份文件中恢复服务器"
   },
   "kdf": {
     "argon2id": {
