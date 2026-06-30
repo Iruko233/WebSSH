@@ -8,14 +8,6 @@
   <img src="assets/1.png" width="800">
 </p>
 
-## Preview
-
-<p align="center">
-  <img src="assets/2.png" width="400">
-  <img src="assets/3.png" width="400">
-  <img src="assets/4.png" width="400">
-</p>
-
 ---
 
 <h2 id="简体中文">简体中文</h2>
