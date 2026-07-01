@@ -677,28 +677,16 @@ func main() {
 				config.Set("sftpRemove", js.FuncOf(func(this js.Value, args []js.Value) any {
 					pathStr := args[0].String()
 					return jsPromise(func() (any, error) {
-						var removeRecursive func(p string) error
-						removeRecursive = func(p string) error {
-							stat, err := sftpClient.Stat(p)
-							if err != nil {
-								return err
-							}
-							if stat.IsDir() {
-								entries, err := sftpClient.ReadDir(p)
-								if err != nil {
-									return err
-								}
-								for _, entry := range entries {
-									err := removeRecursive(p + "/" + entry.Name())
-									if err != nil {
-										return err
-									}
-								}
-								return sftpClient.RemoveDirectory(p)
-							}
-							return sftpClient.Remove(p)
+						// Shell-safe escaping: wrap in single quotes, handle embedded single quotes via '\''
+						escaped := "'" + strings.ReplaceAll(pathStr, "'", "'\\''") + "'"
+						session, err := client.NewSession()
+						if err != nil {
+							return nil, err
 						}
-						return nil, removeRecursive(pathStr)
+						defer session.Close()
+						// -- prevents names starting with '-' from being parsed as options
+						_, err = session.Output("rm -rf -- " + escaped)
+						return nil, err
 					})
 				}))
 

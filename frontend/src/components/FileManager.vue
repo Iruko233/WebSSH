@@ -482,9 +482,11 @@ const handleCommand = async (cmd: string, row: FileInfo) => {
       await ElMessageBox.confirm(t('fileManager.deleteConfirm', { name: row.name }), t('fileManager.warning'), { type: 'warning' })
       loading.value = true
       await props.sshConn.sftpRemove(path)
+      ElMessage.success(t('fileManager.deleteSuccess'))
       refresh()
-    } catch (e) {
+    } catch (e: any) {
       loading.value = false
+      if (e !== 'cancel') ElMessage.error(t('fileManager.deleteFailed', { msg: e?.message || e }))
     }
   } else if (cmd === 'rename') {
     try {
@@ -492,9 +494,11 @@ const handleCommand = async (cmd: string, row: FileInfo) => {
       if (!value || value === row.name) return
       loading.value = true
       await props.sshConn.sftpRename(path, resolvePath(value))
+      ElMessage.success(t('fileManager.renameSuccess'))
       refresh()
-    } catch (e) {
+    } catch (e: any) {
       loading.value = false
+      if (e !== 'cancel') ElMessage.error(t('fileManager.renameFailed', { msg: e?.message || e }))
     }
   } else if (cmd === 'download' && !row.isDir) {
     downloadFile(row)
@@ -515,15 +519,32 @@ const batchDownload = async () => {
 
 const batchDelete = async () => {
   try {
-    await ElMessageBox.confirm(t('fileManager.deleteConfirm', { name: `${selectedFiles.value.length} items` }), t('fileManager.warning'), { type: 'warning' })
-    loading.value = true
-    for (const file of selectedFiles.value) {
-      const path = resolvePath(file.name)
-      await props.sshConn.sftpRemove(path)
+    await ElMessageBox.confirm(
+      t('fileManager.deleteConfirm', { name: `${selectedFiles.value.length} items` }),
+      t('fileManager.warning'),
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  loading.value = true
+  const failed: string[] = []
+  for (const file of selectedFiles.value) {
+    try {
+      await props.sshConn.sftpRemove(resolvePath(file.name))
+    } catch (e: any) {
+      failed.push(file.name)
     }
-    refresh()
-  } catch (e) {
-    loading.value = false
+  }
+  refresh()
+  loading.value = false
+
+  if (failed.length === 0) {
+    ElMessage.success(t('fileManager.deleteSuccess'))
+  } else if (failed.length < selectedFiles.value.length) {
+    ElMessage.warning(t('fileManager.batchDeletePartial', { success: selectedFiles.value.length - failed.length, failed: failed.length }))
+  } else {
+    ElMessage.error(t('fileManager.deleteFailed', { msg: failed.join(', ') }))
   }
 }
 
