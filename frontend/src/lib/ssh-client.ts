@@ -127,7 +127,11 @@ export class SSHConnection {
 
   sendInput(data: string): void {
     if (this.config && this.config.write) {
-      this.config.write(btoa(data));
+      const bytes = new TextEncoder().encode(data);
+      const binaryStr = Array.from(bytes, (byte) =>
+        String.fromCharCode(byte),
+      ).join("");
+      this.config.write(btoa(binaryStr));
     }
   }
 

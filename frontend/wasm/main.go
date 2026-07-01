@@ -675,13 +675,30 @@ func main() {
 				}))
 
 				config.Set("sftpRemove", js.FuncOf(func(this js.Value, args []js.Value) any {
-					path := args[0].String()
+					pathStr := args[0].String()
 					return jsPromise(func() (any, error) {
-						stat, err := sftpClient.Stat(path)
-						if err == nil && stat.IsDir() {
-							return nil, sftpClient.RemoveDirectory(path)
+						var removeRecursive func(p string) error
+						removeRecursive = func(p string) error {
+							stat, err := sftpClient.Stat(p)
+							if err != nil {
+								return err
+							}
+							if stat.IsDir() {
+								entries, err := sftpClient.ReadDir(p)
+								if err != nil {
+									return err
+								}
+								for _, entry := range entries {
+									err := removeRecursive(p + "/" + entry.Name())
+									if err != nil {
+										return err
+									}
+								}
+								return sftpClient.RemoveDirectory(p)
+							}
+							return sftpClient.Remove(p)
 						}
-						return nil, sftpClient.Remove(path)
+						return nil, removeRecursive(pathStr)
 					})
 				}))
 
