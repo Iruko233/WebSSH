@@ -110,6 +110,7 @@ export interface ServerEntry {
 export interface ServerCredentials {
   name?: string;
   group?: string;
+  tags?: string[];
   host: string;
   port: number;
   username: string;

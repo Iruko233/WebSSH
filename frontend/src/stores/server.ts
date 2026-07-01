@@ -41,6 +41,17 @@ export const useServerStore = defineStore('server', {
         groups[groupName].push(srv)
       }
       return groups
+    },
+    availableTags(state): string[] {
+      const tags = new Set<string>()
+      for (const srv of state.servers) {
+        if (srv.credentials.tags && Array.isArray(srv.credentials.tags)) {
+          for (const tag of srv.credentials.tags) {
+            if (tag.trim()) tags.add(tag.trim())
+          }
+        }
+      }
+      return Array.from(tags).sort()
     }
   },
   actions: {
@@ -195,6 +206,7 @@ export const useServerStore = defineStore('server', {
           
           const credentials = {
             group: srv.group || undefined,
+            tags: Array.isArray(srv.tags) ? srv.tags : undefined,
             host: srv.host,
             port: srvPort,
             username: srv.username,

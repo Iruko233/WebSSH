@@ -26,6 +26,29 @@
     </div>
     
     <div class="form-row">
+      <el-form-item :label="$t('serverForm.tags') || 'Tags'" class="full-width">
+        <el-select
+          v-model="form.tags"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          :reserve-keyword="false"
+          :placeholder="$t('serverForm.tagsPlaceholder') || 'e.g. prod, web, us-east'"
+          size="large"
+          class="full-width"
+        >
+          <el-option
+            v-for="tag in serverStore.availableTags"
+            :key="tag"
+            :label="tag"
+            :value="tag"
+          />
+        </el-select>
+      </el-form-item>
+    </div>
+    
+    <div class="form-row">
       <el-form-item :label="$t('serverForm.host')" required class="flex-2">
         <el-input 
           v-model="form.host" 
@@ -107,6 +130,7 @@ const isLoading = ref(false)
 const form = ref<{
   name: string
   group: string
+  tags: string[]
   host: string
   port: number
   username: string
@@ -115,6 +139,7 @@ const form = ref<{
 }>({
   name: '',
   group: '',
+  tags: [],
   host: '',
   port: 22,
   username: '',
@@ -136,16 +161,19 @@ watch(() => props.server, (newServer) => {
     form.value = {
       name: newServer.name,
       group: newServer.credentials.group || '',
+      tags: newServer.credentials.tags ? [...newServer.credentials.tags] : [],
       host: newServer.credentials.host,
-      port: newServer.credentials.port,
+      port: newServer.credentials.port || 22,
       username: newServer.credentials.username,
       password: newServer.credentials.password,
       expectedHostKey: newServer.credentials.expectedHostKey
     }
   } else {
+    // Reset form
     form.value = {
       name: '',
       group: '',
+      tags: [],
       host: '',
       port: 22,
       username: '',
@@ -168,6 +196,7 @@ const handleSubmit = async () => {
   try {
     const credentials = {
       group: form.value.group || undefined,
+      tags: form.value.tags.length > 0 ? [...form.value.tags] : undefined,
       host: form.value.host,
       port: finalPort,
       username: form.value.username,

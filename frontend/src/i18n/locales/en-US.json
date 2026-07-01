@@ -90,6 +90,7 @@
     "cancelBtn": "Cancel",
     "deleteSuccess": "Deleted successfully",
     "deleteFailed": "Failed to delete",
+    "all": "All",
     "uncategorized": "Uncategorized",
     "selectedCount": "{count} selected"
   },
@@ -130,6 +131,8 @@
     "add": "Add",
     "group": "Group (Optional)",
     "groupPlaceholder": "e.g. Dev",
+    "tags": "Tags (Optional)",
+    "tagsPlaceholder": "e.g. prod, web",
     "fillRequired": "Please fill required fields",
     "addSuccess": "Added successfully",
     "updateSuccess": "Updated successfully",

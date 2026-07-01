@@ -90,6 +90,7 @@
     "cancelBtn": "取消",
     "deleteSuccess": "删除成功",
     "deleteFailed": "删除失败",
+    "all": "全部",
     "uncategorized": "未分组",
     "selectedCount": "已选择 {count} 项"
   },
@@ -130,6 +131,8 @@
     "add": "添加",
     "group": "分组 (可选)",
     "groupPlaceholder": "如: 开发环境",
+    "tags": "标签 (可选)",
+    "tagsPlaceholder": "回车新建标签，如: prod, db",
     "fillRequired": "请填写必填项",
     "addSuccess": "添加成功",
     "updateSuccess": "更新成功",

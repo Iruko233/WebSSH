@@ -91,6 +91,7 @@
 - `port`: ⚪ 选填，未填写则默认为 `22`
 - `name`: ⚪ 选填，未填写则默认展示为 `host` IP
 - `group`: ⚪ 选填，用于服务器分组归类
+- `tags`: ⚪ 选填，字符串数组 (如 `["prod", "web"]`)，用于标记机器属性
 - 导入操作完全在前端内存中进行并自动加密，**不会有任何明文上传至服务器**
 
 ---
@@ -219,6 +220,7 @@ To easily migrate your servers from other clients (like Xshell or Termius), WebS
 - `port`: ⚪ Optional, defaults to `22` if omitted
 - `name`: ⚪ Optional, defaults to the `host` IP if omitted
 - `group`: ⚪ Optional, used to group servers
+- `tags`: ⚪ Optional, array of strings (e.g. `["prod", "web"]`), used to tag servers
 - The import process runs entirely in your browser's memory and encrypts everything locally, **no plaintext data is ever sent to the server**
 
 ---
