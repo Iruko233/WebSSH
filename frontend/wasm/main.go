@@ -14,23 +14,16 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall/js"
 	"time"
 
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/ssh"
 )
 
-var (
-	openFiles   = make(map[int]*sftp.File)
-	nextFileID  = 1
-	fileIDMutex sync.Mutex
-)
-
 // WsConn implements net.Conn over a JavaScript WebSocket.
 type WsConn struct {
+	scope       *jsScope
 	ws          js.Value
 	readChan    chan []byte
 	closeChan   chan struct{}
@@ -119,42 +112,57 @@ func decryptWasmMessage(aesKey []byte, encoded string) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-func NewWsConn(wsURL, token, host string, port int, encryptHandshake bool) (*WsConn, error) {
+func NewWsConn(wsURL, token, host string, port int, encryptHandshake bool, config js.Value, scope *jsScope) (*WsConn, error) {
+	if cancelled := config.Get("cancelled"); cancelled.Type() == js.TypeBoolean && cancelled.Bool() {
+		return nil, errors.New("connection cancelled")
+	}
 	ws := js.Global().Get("WebSocket").New(wsURL)
 	ws.Set("binaryType", "arraybuffer")
 
 	conn := &WsConn{
+		scope:     scope,
 		ws:        ws,
 		readChan:  make(chan []byte, 100),
 		closeChan: make(chan struct{}),
 		negoChan:  make(chan []byte, 1),
 	}
+	// Install cancellation before waiting for WebSocket/SSH negotiation
+	scope.bind(config, "close", func(this js.Value, args []js.Value) any {
+		conn.Close()
+		return nil
+	})
+	ready := false
+	defer func() {
+		if !ready {
+			conn.Close()
+		}
+	}()
 
 	openChan := make(chan struct{})
 	errChan := make(chan error, 1)
 
-	ws.Set("onopen", js.FuncOf(func(this js.Value, args []js.Value) any {
+	scope.bind(ws, "onopen", func(this js.Value, args []js.Value) any {
 		close(openChan)
 		return nil
-	}))
+	})
 
-	ws.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	scope.bind(ws, "onerror", func(this js.Value, args []js.Value) any {
 		select {
 		case errChan <- errors.New("websocket error"):
 		default:
 		}
+		conn.Close()
 		return nil
-	}))
+	})
 
-	ws.Set("onclose", js.FuncOf(func(this js.Value, args []js.Value) any {
+	scope.bind(ws, "onclose", func(this js.Value, args []js.Value) any {
 		if !conn.closed {
-			conn.closed = true
-			close(conn.closeChan)
+			conn.Close()
 		}
 		return nil
-	}))
+	})
 
-	ws.Set("onmessage", js.FuncOf(func(this js.Value, args []js.Value) any {
+	scope.bind(ws, "onmessage", func(this js.Value, args []js.Value) any {
 		event := args[0]
 		data := event.Get("data")
 
@@ -177,8 +185,7 @@ func NewWsConn(wsURL, token, host string, port int, encryptHandshake bool) (*WsC
 			if errStr, ok := msg["error"]; ok {
 				fmt.Printf("WebSocket Proxy Error: %v\n", errStr)
 				if !conn.closed {
-					conn.closed = true
-					close(conn.closeChan)
+					conn.Close()
 				}
 			}
 		} else {
@@ -192,10 +199,12 @@ func NewWsConn(wsURL, token, host string, port int, encryptHandshake bool) (*WsC
 			}
 		}
 		return nil
-	}))
+	})
 
 	select {
 	case <-openChan:
+	case <-conn.closeChan:
+		return nil, errors.New("websocket closed before opening")
 	case err := <-errChan:
 		return nil, err
 	case <-time.After(5 * time.Second):
@@ -211,6 +220,7 @@ func NewWsConn(wsURL, token, host string, port int, encryptHandshake bool) (*WsC
 		}
 		initBytes, _ := json.Marshal(initMsg)
 		ws.Call("send", string(initBytes))
+		ready = true
 		return conn, nil
 	}
 
@@ -278,6 +288,7 @@ func NewWsConn(wsURL, token, host string, port int, encryptHandshake bool) (*WsC
 	encPayload, _ := json.Marshal(map[string]string{"enc": encInit})
 	ws.Call("send", string(encPayload))
 
+	ready = true
 	return conn, nil
 }
 
@@ -315,34 +326,19 @@ func (c *WsConn) Write(b []byte) (int, error) {
 func (c *WsConn) Close() error {
 	if !c.closed {
 		c.closed = true
-		c.ws.Call("close")
 		close(c.closeChan)
+		c.scope.dispose()
+	}
+	if c.ws.Get("readyState").Int() < 2 {
+		c.ws.Call("close")
 	}
 	return nil
 }
 func (c *WsConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
-func (c *WsConn) RemoteAddr() net.Addr                { return &net.TCPAddr{} }
+func (c *WsConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
 func (c *WsConn) SetDeadline(t time.Time) error      { return nil }
 func (c *WsConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *WsConn) SetWriteDeadline(t time.Time) error { return nil }
-
-// Helper to wrap a Go function returning (any, error) into a JS Promise
-func jsPromise(fn func() (any, error)) js.Value {
-	promiseConstructor := js.Global().Get("Promise")
-	return promiseConstructor.New(js.FuncOf(func(this js.Value, args []js.Value) any {
-		resolve := args[0]
-		reject := args[1]
-		go func() {
-			res, err := fn()
-			if err != nil {
-				reject.Invoke(err.Error())
-			} else {
-				resolve.Invoke(res)
-			}
-		}()
-		return nil
-	}))
-}
 
 func startMonitor(client *ssh.Client, config js.Value, interval float64) {
 	if interval <= 0 {
@@ -491,6 +487,7 @@ func main() {
 
 	js.Global().Set("startWasmSSH", js.FuncOf(func(this js.Value, args []js.Value) any {
 		config := args[0]
+		scope := &jsScope{}
 
 		wsURL := config.Get("wsUrl").String()
 		token := config.Get("token").String()
@@ -507,11 +504,21 @@ func main() {
 		}
 
 		go func() {
-			wsConn, err := NewWsConn(wsURL, token, host, port, encryptHandshake)
+			wsConn, err := NewWsConn(wsURL, token, host, port, encryptHandshake, config, scope)
 			if err != nil {
+				scope.dispose()
 				onClose.Invoke(fmt.Sprintf("Failed to connect websocket: %v", err))
 				return
 			}
+			handedOff := false
+			defer func() {
+				if !handedOff {
+					wsConn.Close()
+				}
+			}()
+			// NewClientConn does not apply ClientConfig.Timeout to an existing net.Conn
+			setupTimer := time.AfterFunc(15*time.Second, func() { wsConn.Close() })
+			defer setupTimer.Stop()
 
 			expectedHostKey := config.Get("expectedHostKey").String()
 			sshConfig := &ssh.ClientConfig{
@@ -574,217 +581,85 @@ func main() {
 			stdin, _ := session.StdinPipe()
 			stdout, _ := session.StdoutPipe()
 
-			// Notify JS ready BEFORE shell starts so 'Connected' message appears before MOTD
-			if onReady := config.Get("onReady"); onReady.Type() == js.TypeFunction {
-				onReady.Invoke()
-			}
-
 			if err := session.Shell(); err != nil {
 				session.Close()
 				onClose.Invoke(fmt.Sprintf("Failed to start shell: %v", err))
 				return
 			}
+			setupTimer.Stop()
 
-			// IO Loop
+			// JS Callbacks for PTY
+			inputQueue := make(chan []byte, 128)
+			resizeQueue := make(chan [2]int, 1)
 			go func() {
-				buf := make([]byte, 32*1024)
 				for {
-					n, err := stdout.Read(buf)
-					if n > 0 {
-						b64 := base64.StdEncoding.EncodeToString(buf[:n])
-						onData.Invoke(b64)
-					}
-					if err != nil {
-						onClose.Invoke("SSH connection closed")
-						session.Close()
-						client.Close()
+					select {
+					case data := <-inputQueue:
+						if _, err := stdin.Write(data); err != nil {
+							return
+						}
+					case <-wsConn.closeChan:
 						return
 					}
 				}
 			}()
-
-			// JS Callbacks for PTY
-			config.Set("write", js.FuncOf(func(this js.Value, args []js.Value) any {
+			go func() {
+				for {
+					select {
+					case size := <-resizeQueue:
+						session.WindowChange(size[0], size[1])
+					case <-wsConn.closeChan:
+						return
+					}
+				}
+			}()
+			scope.bind(config, "write", func(this js.Value, args []js.Value) any {
 				b64 := args[0].String()
 				data, _ := base64.StdEncoding.DecodeString(b64)
-				stdin.Write(data)
+				select {
+				case inputQueue <- data:
+				default:
+					onClose.Invoke("SSH input queue full")
+					wsConn.Close()
+				}
 				return nil
-			}))
-			config.Set("resize", js.FuncOf(func(this js.Value, args []js.Value) any {
-				session.WindowChange(args[0].Int(), args[1].Int())
+			})
+			scope.bind(config, "resize", func(this js.Value, args []js.Value) any {
+				select {
+				case <-resizeQueue:
+				default:
+				}
+				resizeQueue <- [2]int{args[0].Int(), args[1].Int()}
 				return nil
-			}))
+			})
 			// Apply any resize buffered before this callback was ready
 			if r := config.Get("__pendingRows"); r.Type() == js.TypeNumber {
 				if c := config.Get("__pendingCols"); c.Type() == js.TypeNumber {
 					session.WindowChange(r.Int(), c.Int())
 				}
 			}
-			config.Set("close", js.FuncOf(func(this js.Value, args []js.Value) any {
-				session.Close()
-				client.Close()
-				return nil
-			}))
-
-			// SFTP Initialization
-			sftpClient, err := sftp.NewClient(client)
-			if err == nil {
-				config.Set("sftpList", js.FuncOf(func(this js.Value, args []js.Value) any {
-					path := args[0].String()
-					return jsPromise(func() (any, error) {
-						files, err := sftpClient.ReadDir(path)
-						if err != nil {
-							return nil, err
-						}
-						var res []interface{}
-						for _, f := range files {
-							res = append(res, map[string]interface{}{
-								"name":        f.Name(),
-								"isDir":       f.IsDir(),
-								"size":        f.Size(),
-								"modTime":     f.ModTime().UnixMilli(),
-								"permissions": f.Mode().String(),
-							})
-						}
-						return res, nil
-					})
-				}))
-
-				config.Set("sftpStat", js.FuncOf(func(this js.Value, args []js.Value) any {
-					path := args[0].String()
-					return jsPromise(func() (any, error) {
-						stat, err := sftpClient.Stat(path)
-						if err != nil {
-							return nil, err
-						}
-						return map[string]interface{}{
-							"name":        stat.Name(),
-							"isDir":       stat.IsDir(),
-							"size":        stat.Size(),
-							"modTime":     stat.ModTime().UnixMilli(),
-							"permissions": stat.Mode().String(),
-						}, nil
-					})
-				}))
-
-				config.Set("sftpMkdir", js.FuncOf(func(this js.Value, args []js.Value) any {
-					path := args[0].String()
-					return jsPromise(func() (any, error) {
-						return nil, sftpClient.MkdirAll(path)
-					})
-				}))
-
-				config.Set("sftpRemove", js.FuncOf(func(this js.Value, args []js.Value) any {
-					pathStr := args[0].String()
-					return jsPromise(func() (any, error) {
-						// Shell-safe escaping: wrap in single quotes, handle embedded single quotes via '\''
-						escaped := "'" + strings.ReplaceAll(pathStr, "'", "'\\''") + "'"
-						session, err := client.NewSession()
-						if err != nil {
-							return nil, err
-						}
-						defer session.Close()
-						// -- prevents names starting with '-' from being parsed as options
-						_, err = session.Output("rm -rf -- " + escaped)
-						return nil, err
-					})
-				}))
-
-				config.Set("sftpRename", js.FuncOf(func(this js.Value, args []js.Value) any {
-					return jsPromise(func() (any, error) {
-						return nil, sftpClient.Rename(args[0].String(), args[1].String())
-					})
-				}))
-
-				config.Set("sftpOpenFile", js.FuncOf(func(this js.Value, args []js.Value) any {
-					path := args[0].String()
-					flags := args[1].String()
-					return jsPromise(func() (any, error) {
-						var f *sftp.File
-						var err error
-						if flags == "r" {
-							f, err = sftpClient.Open(path)
-						} else if flags == "w" {
-							f, err = sftpClient.Create(path)
-						} else {
-							return nil, errors.New("unsupported flags")
-						}
-						if err != nil {
-							return nil, err
-						}
-
-						fileIDMutex.Lock()
-						id := nextFileID
-						nextFileID++
-						openFiles[id] = f
-						fileIDMutex.Unlock()
-						return id, nil
-					})
-				}))
-
-				config.Set("sftpCloseFile", js.FuncOf(func(this js.Value, args []js.Value) any {
-					id := args[0].Int()
-					return jsPromise(func() (any, error) {
-						fileIDMutex.Lock()
-						f, ok := openFiles[id]
-						if ok {
-							delete(openFiles, id)
-						}
-						fileIDMutex.Unlock()
-						if !ok {
-							return nil, errors.New("invalid file id")
-						}
-						return nil, f.Close()
-					})
-				}))
-
-				config.Set("sftpReadFile", js.FuncOf(func(this js.Value, args []js.Value) any {
-					id := args[0].Int()
-					length := args[1].Int()
-					return jsPromise(func() (any, error) {
-						fileIDMutex.Lock()
-						f, ok := openFiles[id]
-						fileIDMutex.Unlock()
-						if !ok {
-							return nil, errors.New("invalid file id")
-						}
-
-						buf := make([]byte, length)
-						n, err := f.Read(buf)
-						if err != nil && err != io.EOF {
-							return nil, err
-						}
-						if n == 0 && err == io.EOF {
-							return nil, nil
-						}
-
-						uint8Array := js.Global().Get("Uint8Array").New(n)
-						js.CopyBytesToJS(uint8Array, buf[:n])
-						return uint8Array, nil
-					})
-				}))
-
-				config.Set("sftpWriteFile", js.FuncOf(func(this js.Value, args []js.Value) any {
-					id := args[0].Int()
-					dataJS := args[1]
-					length := dataJS.Length()
-					buf := make([]byte, length)
-					js.CopyBytesToGo(buf, dataJS)
-
-					return jsPromise(func() (any, error) {
-						fileIDMutex.Lock()
-						f, ok := openFiles[id]
-						fileIDMutex.Unlock()
-						if !ok {
-							return nil, errors.New("invalid file id")
-						}
-						_, err := f.Write(buf)
-						return nil, err
-					})
-				}))
-			} else {
-				fmt.Println("Warning: Failed to create SFTP client:", err)
+			// Shell and input callbacks are ready before notifying JS or consuming output
+			if onReady := config.Get("onReady"); onReady.Type() == js.TypeFunction {
+				onReady.Invoke()
 			}
+			handedOff = true
+			go func() {
+				defer client.Close()
+				defer session.Close()
+				buf := make([]byte, 32*1024)
+				for {
+					n, err := stdout.Read(buf)
+					if n > 0 {
+						onData.Invoke(base64.StdEncoding.EncodeToString(buf[:n]))
+					}
+					if err != nil {
+						onClose.Invoke("SSH connection closed")
+						return
+					}
+				}
+			}()
+
+			go initSFTP(client, scope, config)
 
 			// Start Monitor asynchronously
 			interval := 5.0

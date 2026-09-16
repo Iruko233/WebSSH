@@ -2,55 +2,50 @@ package model
 
 import "encoding/json"
 
-type VaultConfig struct {
-	ID        int    `json:"id"`
-	Salt      string `json:"salt"`
-	AuthHash  string `json:"-"`
-	JWTSecret string `json:"-"`
-	KdfAlgo   string `json:"kdfAlgo"`
-	KdfParams string `json:"-"` // stored as JSON string in DB
+// VaultEnvelope is opaque to the server, all business data is encrypted by the browser
+type VaultEnvelope struct {
+	VaultID       string `json:"vaultId"`
+	FormatVersion int    `json:"formatVersion"`
+	KeyEpoch      int64  `json:"keyEpoch"`
+	Revision      int64  `json:"revision"`
+	IV            string `json:"iv"`
+	EncryptedData string `json:"encryptedData"`
 }
-
-// KdfParamsRaw returns the KDF params as raw JSON for API responses.
-func (c *VaultConfig) KdfParamsRaw() json.RawMessage {
-	if c.KdfParams == "" {
-		return nil
-	}
-	return json.RawMessage(c.KdfParams)
-}
-
 type VaultStatusResponse struct {
-	Exists    bool            `json:"exists"`
-	Salt      string          `json:"salt,omitempty"`
-	KdfAlgo   string          `json:"kdfAlgo,omitempty"`
-	KdfParams json.RawMessage `json:"kdfParams,omitempty"`
+	Exists        bool            `json:"exists"`
+	Salt          string          `json:"salt,omitempty"`
+	KdfAlgo       string          `json:"kdfAlgo,omitempty"`
+	KdfParams     json.RawMessage `json:"kdfParams,omitempty"`
+	VaultID       string          `json:"vaultId,omitempty"`
+	FormatVersion int             `json:"formatVersion,omitempty"`
+	KeyEpoch      int64           `json:"keyEpoch,omitempty"`
 }
-
 type CreateVaultRequest struct {
-	Salt      string          `json:"salt" binding:"required"`
-	AuthHash  string          `json:"authHash" binding:"required"`
-	KdfAlgo   string          `json:"kdfAlgo" binding:"required"`
-	KdfParams json.RawMessage `json:"kdfParams" binding:"required"`
+	VaultEnvelope
+	Salt      string          `json:"salt"`
+	AuthHash  string          `json:"authHash"`
+	KdfAlgo   string          `json:"kdfAlgo"`
+	KdfParams json.RawMessage `json:"kdfParams"`
 }
-
 type UnlockVaultRequest struct {
-	AuthKeyHash string `json:"authKeyHash" binding:"required"`
+	AuthKeyHash string `json:"authKeyHash"`
+	VaultID     string `json:"vaultId"`
+	KeyEpoch    int64  `json:"keyEpoch"`
 }
-
 type AuthResponse struct {
-	Token string `json:"token"`
+	Token     string `json:"token"`
+	ExpiresAt int64  `json:"expiresAt"`
+	VaultID   string `json:"vaultId"`
+	KeyEpoch  int64  `json:"keyEpoch"`
 }
-
-type RekeyServerEntry struct {
-	ID            string `json:"id" binding:"required"`
-	EncryptedData string `json:"encryptedData" binding:"required"`
-	IV            string `json:"iv" binding:"required"`
+type UpdateVaultRequest struct {
+	VaultEnvelope
+	ExpectedRevision int64 `json:"expectedRevision"`
+	ExpectedKeyEpoch int64 `json:"expectedKeyEpoch"`
 }
-
 type RekeyVaultRequest struct {
-	Salt      string             `json:"salt" binding:"required"`
-	AuthHash  string             `json:"authHash" binding:"required"`
-	KdfAlgo   string             `json:"kdfAlgo" binding:"required"`
-	KdfParams json.RawMessage    `json:"kdfParams" binding:"required"`
-	Servers   []RekeyServerEntry `json:"servers"`
+	CreateVaultRequest
+	CurrentAuthKeyHash string `json:"currentAuthKeyHash"`
+	ExpectedRevision   int64  `json:"expectedRevision"`
+	ExpectedKeyEpoch   int64  `json:"expectedKeyEpoch"`
 }

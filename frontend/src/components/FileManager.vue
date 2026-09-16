@@ -1,19 +1,18 @@
 <template>
   <div 
     class="file-manager" 
-    v-loading="loading"
     @dragenter.prevent="handleDragEnter"
     @dragleave.prevent="handleDragLeave"
     @dragover.prevent
     @drop.prevent="handleDrop"
   >
     <div class="fm-header">
-      <div class="fm-path-bar" @dblclick="pathEditMode = true">
+      <div v-show="selectedFiles.length === 0" class="fm-path-bar" @dblclick="pathEditMode = true">
         <el-button size="small" :icon="Top" @click="goUp" circle title="Go Up" />
         <template v-if="!pathEditMode">
           <div class="fm-breadcrumbs">
             <el-breadcrumb separator="/">
-              <el-breadcrumb-item @click="navigateTo('/')"><el-icon><Monitor /></el-icon></el-breadcrumb-item>
+              <el-breadcrumb-item class="path-root" @click="navigateTo('/')">/</el-breadcrumb-item>
               <el-breadcrumb-item 
                 v-for="(part, idx) in pathParts" 
                 :key="idx" 
@@ -32,31 +31,42 @@
           ref="pathInputRef"
           @keyup.enter="handlePathEnter" 
           @blur="pathEditMode = false"
-          style="margin-left: 8px; width: 100%;"
-        >
-          <template #prefix>
-            <el-icon><Folder /></el-icon>
-          </template>
-        </el-input>
+          class="path-input"
+        />
       </div>
-      <div class="fm-actions">
+      <span v-if="selectedFiles.length > 0" class="selection-count" aria-live="polite" :title="$t('fileManager.selectedCount', { count: selectedFiles.length })">
+        {{ $t('fileManager.selectedCount', { count: selectedFiles.length }) }}
+      </span>
+      <fieldset class="fm-actions">
         <template v-if="selectedFiles.length > 0">
-          <span class="selection-count">{{ $t('fileManager.selectedCount', { count: selectedFiles.length }) }}</span>
-          <el-button size="small" :icon="Download" @click="batchDownload" type="primary" plain>{{ $t('fileManager.download') }}</el-button>
-          <el-button size="small" :icon="Delete" @click="batchDelete" type="danger" plain>{{ $t('fileManager.delete') }}</el-button>
+          <el-tooltip :content="$t('fileManager.download')" :show-after="500">
+            <el-button size="small" :icon="Download" @click="batchDownload" :disabled="!canOperate" type="primary" plain circle :aria-label="$t('fileManager.download')" />
+          </el-tooltip>
+          <el-tooltip :content="$t('fileManager.delete')" :show-after="500">
+            <el-button size="small" :icon="Delete" @click="batchDelete" :disabled="!canOperate" type="danger" plain circle :aria-label="$t('fileManager.delete')" />
+          </el-tooltip>
+          <el-tooltip :content="$t('fileManager.clearSelection')" :show-after="500">
+            <el-button size="small" :icon="Close" @click="fileTableRef?.clearSelection()" circle :aria-label="$t('fileManager.clearSelection')" />
+          </el-tooltip>
         </template>
         <template v-else>
-          <el-button size="small" :icon="Refresh" circle @click="refresh" />
-          <el-button size="small" :icon="FolderAdd" circle @click="promptMkdir" />
-          <el-button size="small" :icon="DocumentAdd" circle @click="promptCreate" />
-          <el-button size="small" :icon="Upload" circle @click="() => fileInput?.click()" />
+          <el-button size="small" :icon="Refresh" circle :disabled="!canOperate" @click="refresh" />
+          <el-button size="small" :icon="FolderAdd" circle :disabled="!canOperate" @click="promptMkdir" />
+          <el-button size="small" :icon="DocumentAdd" circle :disabled="!canOperate" @click="promptCreate" />
+          <el-button size="small" :icon="Upload" circle :disabled="!canOperate" @click="() => fileInput?.click()" />
         </template>
-        <input type="file" ref="fileInput" style="display: none" @change="handleFileSelect" multiple />
-      </div>
+        <input type="file" ref="fileInput" style="display: none" :disabled="!canOperate" @change="handleFileSelect" multiple />
+      </fieldset>
     </div>
 
-    <div class="table-container">
+    <div class="table-container" v-loading="loading && client.state.phase === 'ready'" :aria-busy="sftpPending || loading">
+      <div v-if="client.state.phase !== 'ready'" class="sftp-state" :role="sftpPending ? 'status' : 'alert'">
+        <el-icon v-if="sftpPending" class="sftp-spinner" aria-hidden="true"><Loading /></el-icon>
+        <span>{{ sftpPending ? $t('sftp.initializing') : errorText(client.state.error || 'SFTP_CLOSED') }}</span>
+      </div>
       <el-table
+        v-show="client.state.phase === 'ready'"
+        ref="fileTableRef"
         :data="files"
         style="width: 100%"
         height="100%"
@@ -65,7 +75,7 @@
       @row-dblclick="handleRowDblClick"
       @row-contextmenu="handleContextMenu"
     >
-      <el-table-column type="selection" width="40" />
+      <el-table-column type="selection" width="40" :selectable="() => canOperate" />
       <el-table-column :label="$t('fileManager.name')" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
           <div class="file-name-cell">
@@ -91,7 +101,7 @@
       <el-table-column width="100" align="right">
         <template #default="{ row }">
           <el-dropdown trigger="click" @command="(cmd: string) => handleCommand(cmd, row)">
-            <el-button link :icon="MoreFilled" />
+            <el-button link :icon="MoreFilled" :disabled="!canOperate" />
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="download" :icon="Download" v-if="!row.isDir">{{ $t('fileManager.download') }}</el-dropdown-item>
@@ -142,14 +152,27 @@
       </li>
     </ul>
 
-    <!-- Transfers Panel -->
-    <div v-if="activeTransfers.length > 0" class="transfers-panel">
-      <div v-for="t in activeTransfers" :key="t.id" class="transfer-item">
-        <div class="transfer-info">
-          <span>{{ t.type === 'upload' ? $t('fileManager.uploading', { name: t.name, progress: t.progress }) : $t('fileManager.downloading', { name: t.name, progress: t.progress }) }}</span>
-          <span v-if="t.speed" class="transfer-speed">{{ t.speed }}</span>
+    <div v-if="activeTransfers.length" class="transfers-panel">
+      <div v-for="task in activeTransfers" :key="task.id" class="transfer-item">
+        <div class="transfer-header">
+          <span class="transfer-name" :title="task.path">{{ task.type === 'upload' ? '↑' : '↓' }} {{ task.name }}</span>
+          <span class="transfer-status" :class="task.state" :title="task.saved ? $t('sftp.handedToBrowser') : undefined">{{ $t(`sftp.states.${task.saved ? 'handed-off' : task.state}`) }}</span>
+          <button
+            type="button"
+            class="transfer-dismiss"
+            :aria-label="`${$t(isTransferActive(task) ? 'sftp.cancelTransfer' : 'sftp.clear')}: ${task.name}`"
+            :title="$t(isTransferActive(task) ? 'sftp.cancelTransfer' : 'sftp.clear')"
+            @click="isTransferActive(task) ? cancelTransfer(task.id) : clearTransfer(task.id)"
+          ><el-icon><Close /></el-icon></button>
         </div>
-        <el-progress :percentage="t.progress" :show-text="false" />
+        <el-progress :percentage="transferPercentage(task)" :show-text="false" :status="task.state === 'failed' || task.state === 'uncertain' ? 'exception' : undefined" />
+        <div class="transfer-info">
+          <span>{{ formatSize(task.transferredBytes) }} / {{ formatSize(task.totalBytes) }}</span>
+          <span v-if="task.state === 'running'">{{ formatSize(task.speedBps) }}/s</span>
+        </div>
+        <div v-if="task.error" class="transfer-error">{{ errorText(task.error) }}</div>
+        <div v-if="task.temporaryPath" class="transfer-error">{{ $t('sftp.temporaryPath') }}: {{ task.temporaryPath }}</div>
+        <el-button v-if="task.state === 'ready-to-save'" class="transfer-save" size="small" type="primary" text @click="saveTransfer(task.id)">{{ $t(task.saved ? 'sftp.saveAgain' : 'sftp.saveLocally') }}</el-button>
       </div>
     </div>
     <!-- Drag Overlay -->
@@ -163,476 +186,302 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import '../lib/monaco-setup'
 import { SSHConnection } from '../lib/ssh-client'
-import type { FileInfo } from '../lib/ssh-client'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { 
-  Folder, Document, Refresh, 
-  FolderAdd, DocumentAdd, MoreFilled, Edit, Delete, Upload, Download, Top, Monitor, EditPen, UploadFilled
-} from '@element-plus/icons-vue'
-import { nextTick } from 'vue'
+import { asError, type FileInfo } from '../lib/sftp-client'
+import { chooseDownloadFile } from '../lib/download-target'
+import { transfers, queueDownload, queueUpload, cancelTransfer, clearTransfer, saveTransfer, isTransferActive, transferPercentage, onTransferDirectoryChange } from '../stores/transfers'
+import { ElMessage, ElMessageBox, ElCheckbox, type TableInstance } from 'element-plus'
+import { Folder, Document, Refresh, FolderAdd, DocumentAdd, MoreFilled, Edit, Delete, Upload, Download, Top, EditPen, UploadFilled, Close, Loading } from '@element-plus/icons-vue'
 
-const props = defineProps<{
-  sshConn: SSHConnection
-  initialPath: string
-}>()
-
-const { t } = useI18n()
-
+const props = defineProps<{ sshConn: SSHConnection; initialPath: string; tabId: string }>()
+const { t, te } = useI18n()
+type ListedFile = FileInfo & { fullPath: string; connectionKey: string }
+const client = computed(() => props.sshConn.sftp)
 const loading = ref(false)
-const files = ref<FileInfo[]>([])
-const currentPath = ref('/root')
-const inputPath = ref('/root')
-
+const files = ref<ListedFile[]>([])
+const currentPath = ref(props.initialPath)
+const inputPath = ref(props.initialPath)
 const pathEditMode = ref(false)
 const pathInputRef = ref<any>(null)
-const selectedFiles = ref<FileInfo[]>([])
-
-const pathParts = computed(() => {
-  return currentPath.value.split('/').filter(p => p)
-})
-
-// Editor state
+const selectedFiles = ref<ListedFile[]>([])
+const fileTableRef = ref<TableInstance>()
+const pathParts = computed(() => currentPath.value.split('/').filter(Boolean))
 const editorVisible = ref(false)
-const editorContent = ref('')
 const editingFilePath = ref('')
 const editingFileName = ref('')
-const editingFileModTime = ref(0)
+const editingConnectionKey = ref('')
+const editingFileInfo = ref<FileInfo | null>(null)
+const editorContent = ref('')
 const saving = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
-
-interface Transfer {
-  id: string
-  name: string
-  type: 'upload' | 'download'
-  progress: number
-  speed?: string
-}
-const activeTransfers = ref<Transfer[]>([])
-
-// Context menu state
+const activeTransfers = computed(() => transfers.filter(task => task.tabId === props.tabId || task.orphaned))
+const canOperate = computed(() => !loading.value && client.value.state.phase === 'ready')
+const sftpPending = computed(() => client.value.state.phase === 'idle' || client.value.state.phase === 'initializing')
 const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
-const contextMenuRow = ref<FileInfo | null>(null)
+const contextMenuRow = ref<ListedFile | null>(null)
 const contextMenuRef = ref<HTMLElement | null>(null)
-
-// Drag overlay state
 const isDragging = ref(false)
 let dragCounter = 0
+let disposed = false
+let requestRevision = 0
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
-const handleDragEnter = (e: DragEvent) => {
-  if (editorVisible.value) return
-  if (e.dataTransfer?.types.includes('Files')) {
-    dragCounter++
-    isDragging.value = true
+const errorText = (error: unknown) => {
+  const message = typeof error === 'string' ? error : asError(error).message
+  const code = message.match(/SFTP_[A-Z_]+/)?.[0]
+  return code && te(`sftp.errors.${code}`) ? t(`sftp.errors.${code}`) : message
+}
+const joinPath = (directory: string, name: string) => `${directory === '/' ? '' : directory}/${name}`
+const normalizePath = (path: string) => {
+  const parts: string[] = []
+  for (const part of path.split('/')) {
+    if (part === '..') parts.pop()
+    else if (part && part !== '.') parts.push(part)
+  }
+  return '/' + parts.join('/')
+}
+const validName = (name: string) => !!name && name !== '.' && name !== '..' && !name.includes('/') && !name.includes(String.fromCharCode(0))
+const assertConnection = (key: string) => { if (client.value.key !== key || client.value.state.phase !== 'ready') throw new Error('SFTP_CLOSED') }
+const closeContextMenu = () => { contextMenuVisible.value = false }
+const rowUsable = (row: ListedFile) => canOperate.value && files.value.includes(row) && row.connectionKey === client.value.key
+
+const refresh = async () => {
+  const revision = ++requestRevision
+  const connection = client.value
+  const key = connection.key
+  const path = currentPath.value
+  selectedFiles.value = []
+  closeContextMenu()
+  files.value = []
+  if (connection.state.phase !== 'ready') { loading.value = false; return }
+  loading.value = true
+  try {
+    const list = await connection.list(path)
+    if (disposed || revision !== requestRevision || path !== currentPath.value || key !== client.value.key) return
+    files.value = list.map(file => ({ ...file, fullPath: joinPath(path, file.name), connectionKey: key }))
+      .sort((a, b) => a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name))
+  } catch (error) {
+    if (!disposed && revision === requestRevision && key === client.value.key) ElMessage.error(t('fileManager.listFailed', { msg: errorText(error) }))
+  } finally {
+    if (!disposed && revision === requestRevision) loading.value = false
   }
 }
-
-const handleDragLeave = (e: DragEvent) => {
-  if (editorVisible.value) return
-  if (e.dataTransfer?.types.includes('Files')) {
-    dragCounter--
-    if (dragCounter <= 0) {
-      dragCounter = 0
-      isDragging.value = false
-    }
-  }
+const scheduleDirectoryRefresh = (key: string, directory: string) => {
+  if (disposed || key !== client.value.key || normalizePath(directory) !== currentPath.value) return
+  clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => { if (key === client.value.key && normalizePath(directory) === currentPath.value) void refresh() }, 200)
 }
-
-const handleContextMenu = async (row: FileInfo, _column: any, event: MouseEvent) => {
+const unsubscribeDirectory = onTransferDirectoryChange(scheduleDirectoryRefresh)
+onMounted(() => { document.addEventListener('click', closeContextMenu); void refresh() })
+onUnmounted(() => {
+  disposed = true
+  requestRevision++
+  clearTimeout(refreshTimer)
+  unsubscribeDirectory()
+  document.removeEventListener('click', closeContextMenu)
+})
+watch(() => props.initialPath, value => navigateTo(value))
+watch(() => [client.value.key, client.value.state.phase], () => { void refresh() })
+watch(pathEditMode, async value => { if (value) { inputPath.value = currentPath.value; await nextTick(); pathInputRef.value?.focus() } })
+const navigateTo = (path: string) => { currentPath.value = normalizePath(path); inputPath.value = currentPath.value; void refresh() }
+const navigateToPart = (index: number) => navigateTo('/' + pathParts.value.slice(0, index + 1).join('/'))
+const handlePathEnter = () => { navigateTo(inputPath.value); pathEditMode.value = false }
+const goUp = () => navigateTo(currentPath.value.slice(0, currentPath.value.lastIndexOf('/')) || '/')
+const handleSelectionChange = (value: ListedFile[]) => { selectedFiles.value = value }
+const handleContextMenu = async (row: ListedFile, _column: unknown, event: MouseEvent) => {
   event.preventDefault()
+  if (!rowUsable(row)) return
   contextMenuRow.value = row
   contextMenuX.value = event.clientX
   contextMenuY.value = event.clientY
   contextMenuVisible.value = true
-
   await nextTick()
-  if (contextMenuRef.value) {
-    const rect = contextMenuRef.value.getBoundingClientRect()
-    // Adjust if menu goes beyond right edge
-    if (contextMenuX.value + rect.width > window.innerWidth) {
-      contextMenuX.value = window.innerWidth - rect.width - 10
-    }
-    // Adjust if menu goes beyond bottom edge
-    if (contextMenuY.value + rect.height > window.innerHeight) {
-      // If subtracting height goes above top of screen, just set it to 10
-      const newY = event.clientY - rect.height
-      contextMenuY.value = newY > 0 ? newY : 10
-    }
+  const rect = contextMenuRef.value?.getBoundingClientRect()
+  if (rect) {
+    contextMenuX.value = Math.max(10, Math.min(event.clientX, window.innerWidth - rect.width - 10))
+    contextMenuY.value = Math.max(10, Math.min(event.clientY, window.innerHeight - rect.height - 10))
   }
 }
 
-const closeContextMenu = () => {
-  contextMenuVisible.value = false
-}
-
-onMounted(() => {
-  currentPath.value = props.initialPath
-  inputPath.value = props.initialPath
-  document.addEventListener('click', closeContextMenu)
-  refresh()
-})
-
-watch(() => props.initialPath, (newVal) => {
-  currentPath.value = newVal
-  inputPath.value = newVal
-  refresh()
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', closeContextMenu)
-})
-
-const resolvePath = (part: string) => {
-  if (currentPath.value === '/') return `/${part}`
-  return `${currentPath.value}/${part}`
-}
-
-const refresh = async () => {
-  loading.value = true
+const startDownload = async (row: ListedFile, nativePicker = true) => {
+  const connection = client.value
+  const key = row.connectionKey
+  const path = row.fullPath
   try {
-    const list = await props.sshConn.sftpList(currentPath.value)
-    // Sort directories first, then alphabetically
-    files.value = list.sort((a: FileInfo, b: FileInfo) => {
-      if (a.isDir && !b.isDir) return -1
-      if (!a.isDir && b.isDir) return 1
-      return a.name.localeCompare(b.name)
-    })
-  } catch (err: any) {
-    ElMessage.error(t('fileManager.listFailed', { msg: err.message }))
-    if (currentPath.value !== '/') {
-      currentPath.value = '/' // fallback
-      refresh()
-    }
-  } finally {
-    loading.value = false
-  }
+    assertConnection(key)
+    const handle = nativePicker ? await chooseDownloadFile(row.name) : undefined
+    if (disposed) return
+    assertConnection(key)
+    queueDownload(props.tabId, connection, path, handle)
+  } catch (error) { if (asError(error).name !== 'AbortError') ElMessage.error(errorText(error)) }
 }
-
-const navigateToPart = (idx: number) => {
-  const newPath = '/' + pathParts.value.slice(0, idx + 1).join('/')
-  navigateTo(newPath)
+const batchDownload = () => {
+  if (!canOperate.value) return
+  const snapshot = [...selectedFiles.value]
+  // Batch items use explicit save buttons, browsers cannot show multiple pickers from one gesture
+  for (const file of snapshot) if (!file.isDir) void startDownload(file, false)
 }
-
-const handlePathEnter = () => {
-  navigateTo(inputPath.value)
-  pathEditMode.value = false
-}
-
-watch(pathEditMode, async (newVal) => {
-  if (newVal) {
-    inputPath.value = currentPath.value
-    await nextTick()
-    pathInputRef.value?.focus()
-  }
-})
-
-const navigateTo = (path: string) => {
-  if (!path) path = '/'
-  if (!path.startsWith('/')) path = '/' + path
-  currentPath.value = path
-  inputPath.value = path
-  refresh()
-}
-
-const goUp = () => {
-  if (currentPath.value === '/') return
-  const parts = currentPath.value.split('/').filter(p => p)
-  parts.pop()
-  navigateTo('/' + parts.join('/'))
-}
-
-const isTextExtension = (ext: string) => {
-  const exts = ['txt', 'md', 'json', 'js', 'ts', 'go', 'py', 'sh', 'html', 'css', 'xml', 'yaml', 'yml', 'ini', 'conf', 'csv']
-  return exts.includes(ext)
-}
-
-const isKnownBinary = (ext: string) => {
-  const exts = ['zip', 'tar', 'gz', 'rar', '7z', 'exe', 'dll', 'so', 'bin', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'mp4', 'webm', 'ogg', 'mp3', 'wav', 'flac']
-  return exts.includes(ext)
-}
-
-const handleRowDblClick = async (row: FileInfo) => {
-  if (row.isDir) {
-    navigateTo(resolvePath(row.name))
-    return
-  }
-
-  const path = resolvePath(row.name)
+const handleRowDblClick = async (row: ListedFile) => {
+  if (!rowUsable(row)) return
+  if (row.isDir) { navigateTo(row.fullPath); return }
+  const connection = client.value
+  const key = row.connectionKey
+  const path = row.fullPath
   const ext = row.name.split('.').pop()?.toLowerCase() || ''
-  
-  let fileType = 'unknown'
-
-  if (isTextExtension(ext) || row.name.toLowerCase() === 'dockerfile' || row.name.toLowerCase() === 'makefile') fileType = 'text'
-  else if (isKnownBinary(ext)) fileType = 'binary'
-  else {
-    try {
-      loading.value = true
-      const chunk = await props.sshConn.sftpReadFirstBytes(path, 512)
-      let hasNull = false
-      for (let i = 0; i < chunk.length; i++) {
-        if (chunk[i] === 0) {
-          hasNull = true
-          break
-        }
-      }
-      fileType = hasNull ? 'binary' : 'text'
-    } catch (e) {
-      console.warn("Failed to read magic bytes, assuming binary", e)
-      fileType = 'binary'
-    } finally {
-      loading.value = false
-    }
-  }
-
-  if (fileType === 'binary') {
-    try {
+  const binary = ['zip', 'tar', 'gz', 'rar', '7z', 'exe', 'dll', 'so', 'bin', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'mp4', 'webm', 'ogg', 'mp3', 'wav', 'flac']
+  try {
+    let isBinary = binary.includes(ext)
+    if (!isBinary) isBinary = (await connection.read(path, 512, true)).data.includes(0)
+    if (isBinary) {
       await ElMessageBox.confirm(t('fileManager.binaryPrompt'), t('fileManager.warning'), { type: 'warning' })
-      downloadFile(row)
-    } catch {
-      // cancelled
-    }
-    return
-  }
-
-  if (fileType === 'text') {
-    if (row.size > 500 * 1024) {
-      try {
-        await ElMessageBox.confirm(t('fileManager.textTooLarge'), t('fileManager.warning'), { type: 'warning' })
-        downloadFile(row)
-      } catch {
-        // cancelled
-      }
+      await startDownload(row, false)
       return
     }
-
-    try {
-      loading.value = true
-      const content = await props.sshConn.sftpRead(path)
-      editingFilePath.value = path
-      editingFileName.value = row.name
-      editorContent.value = content
-      editingFileModTime.value = row.modTime
-      editorVisible.value = true
-    } catch (err: any) {
-      ElMessage.error(t('fileManager.readFailed', { msg: err.message }))
-    } finally {
-      loading.value = false
-    }
-    return
+    const result = await connection.read(path)
+    assertConnection(key)
+    if (disposed) return
+    editingFilePath.value = path
+    editingFileName.value = row.name
+    editingConnectionKey.value = key
+    editingFileInfo.value = result.info
+    editorContent.value = new TextDecoder().decode(result.data)
+    editorVisible.value = true
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    if (asError(error).message === 'SFTP_EDITOR_TOO_LARGE') {
+      try {
+        await ElMessageBox.confirm(t('fileManager.textTooLarge'), t('fileManager.warning'), { type: 'warning' })
+        await startDownload(row, false)
+      } catch { /* download prompt cancelled */ }
+    } else ElMessage.error(t('fileManager.readFailed', { msg: errorText(error) }))
   }
 }
-
 const saveFile = async () => {
+  const connection = client.value
+  const key = editingConnectionKey.value
+  const path = editingFilePath.value
+  const content = editorContent.value
   saving.value = true
   try {
-    const stat = await props.sshConn.sftpStat(editingFilePath.value)
-    if (stat.modTime > editingFileModTime.value) {
-      await ElMessageBox.confirm(
-        t('fileManager.fileChangedOnServer'),
-        t('fileManager.warning'),
-        { type: 'warning', confirmButtonText: t('fileManager.overwrite'), cancelButtonText: t('fileManager.cancel') }
-      )
+    assertConnection(key)
+    const stat = await connection.stat(path)
+    if (!stat || stat.isDir || stat.isLink) throw new Error('SFTP_NOT_REGULAR')
+    if (!editingFileInfo.value || stat.size !== editingFileInfo.value.size || stat.modTime !== editingFileInfo.value.modTime) {
+      await ElMessageBox.confirm(t('fileManager.fileChangedOnServer'), t('fileManager.warning'), { type: 'warning', confirmButtonText: t('fileManager.overwrite'), cancelButtonText: t('fileManager.cancel') })
     }
-    await props.sshConn.sftpWrite(editingFilePath.value, editorContent.value)
-    ElMessage.success(t('fileManager.saved'))
+    assertConnection(key)
+    queueUpload(props.tabId, connection, path, new Blob([content]), true, stat)
     editorVisible.value = false
-    refresh()
-  } catch (err: any) {
-    if (err !== 'cancel') {
-      ElMessage.error(t('fileManager.saveFailed', { msg: err.message }))
-    }
-  } finally {
-    saving.value = false
-  }
+    ElMessage.success(t('sftp.queued'))
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(errorText(error)) }
+  finally { saving.value = false }
 }
-
-const promptMkdir = async () => {
+const promptNew = async (directory: boolean) => {
+  if (!canOperate.value) return
+  const connection = client.value
+  const key = connection.key
+  const parent = currentPath.value
   try {
-    const { value } = await ElMessageBox.prompt(t('fileManager.folderName'), t('fileManager.newFolder'))
-    if (!value) return
-    await props.sshConn.sftpMkdir(resolvePath(value))
-    refresh()
-  } catch (e) {
-    // cancelled
-  }
+    const { value } = await ElMessageBox.prompt(t(directory ? 'fileManager.folderName' : 'fileManager.fileName'), t(directory ? 'fileManager.newFolder' : 'fileManager.newFile'), { inputValidator: value => validName(value) || t('sftp.invalidName') })
+    assertConnection(key)
+    if (directory) await connection.mkdir(joinPath(parent, value))
+    else await connection.create(joinPath(parent, value))
+    scheduleDirectoryRefresh(key, parent)
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(errorText(error)) }
 }
-
-const promptCreate = async () => {
-  try {
-    const { value } = await ElMessageBox.prompt(t('fileManager.fileName'), t('fileManager.newFile'))
-    if (!value) return
-    await props.sshConn.sftpCreate(resolvePath(value))
-    refresh()
-  } catch (e) {
-    // cancelled
-  }
-}
-
-const handleCommand = async (cmd: string, row: FileInfo) => {
+const promptMkdir = () => promptNew(true)
+const promptCreate = () => promptNew(false)
+const handleCommand = async (command: string, row: ListedFile) => {
   closeContextMenu()
-  const path = resolvePath(row.name)
-  if (cmd === 'delete') {
-    try {
+  if (!rowUsable(row)) return
+  const connection = client.value
+  const key = row.connectionKey
+  const path = row.fullPath
+  const parent = path.slice(0, path.lastIndexOf('/')) || '/'
+  if (command === 'download') { await startDownload(row); return }
+  try {
+    if (command === 'delete') {
       await ElMessageBox.confirm(t('fileManager.deleteConfirm', { name: row.name }), t('fileManager.warning'), { type: 'warning' })
-      loading.value = true
-      await props.sshConn.sftpRemove(path)
+      assertConnection(key)
+      await connection.remove(path)
       ElMessage.success(t('fileManager.deleteSuccess'))
-      refresh()
-    } catch (e: any) {
-      loading.value = false
-      if (e !== 'cancel') ElMessage.error(t('fileManager.deleteFailed', { msg: e?.message || e }))
-    }
-  } else if (cmd === 'rename') {
-    try {
-      const { value } = await ElMessageBox.prompt(t('fileManager.newName'), t('fileManager.rename'), { inputValue: row.name })
-      if (!value || value === row.name) return
-      loading.value = true
-      await props.sshConn.sftpRename(path, resolvePath(value))
+    } else if (command === 'rename') {
+      const { value } = await ElMessageBox.prompt(t('fileManager.newName'), t('fileManager.rename'), { inputValue: row.name, inputValidator: value => validName(value) || t('sftp.invalidName') })
+      if (value === row.name) return
+      assertConnection(key)
+      await connection.rename(path, joinPath(parent, value))
       ElMessage.success(t('fileManager.renameSuccess'))
-      refresh()
-    } catch (e: any) {
-      loading.value = false
-      if (e !== 'cancel') ElMessage.error(t('fileManager.renameFailed', { msg: e?.message || e }))
     }
-  } else if (cmd === 'download' && !row.isDir) {
-    downloadFile(row)
-  }
+    scheduleDirectoryRefresh(key, parent)
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(errorText(error)) }
 }
-
-const handleSelectionChange = (val: FileInfo[]) => {
-  selectedFiles.value = val
-}
-
-const batchDownload = async () => {
-  for (const file of selectedFiles.value) {
-    if (!file.isDir) {
-      await downloadFile(file)
-    }
-  }
-}
-
 const batchDelete = async () => {
-  try {
-    await ElMessageBox.confirm(
-      t('fileManager.deleteConfirm', { name: `${selectedFiles.value.length} items` }),
-      t('fileManager.warning'),
-      { type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  loading.value = true
+  if (!canOperate.value) return
+  const connection = client.value
+  const key = connection.key
+  const parent = currentPath.value
+  const snapshot = [...selectedFiles.value]
+  try { await ElMessageBox.confirm(t('fileManager.deleteConfirm', { name: t('fileManager.selectedCount', { count: snapshot.length }) }), t('fileManager.warning'), { type: 'warning' }) }
+  catch { return }
   const failed: string[] = []
-  for (const file of selectedFiles.value) {
-    try {
-      await props.sshConn.sftpRemove(resolvePath(file.name))
-    } catch (e: any) {
-      failed.push(file.name)
-    }
+  for (const file of snapshot) {
+    try { assertConnection(key); await connection.remove(file.fullPath) }
+    catch (error) { failed.push(`${file.name}: ${errorText(error)}`) }
   }
-  refresh()
-  loading.value = false
-
-  if (failed.length === 0) {
-    ElMessage.success(t('fileManager.deleteSuccess'))
-  } else if (failed.length < selectedFiles.value.length) {
-    ElMessage.warning(t('fileManager.batchDeletePartial', { success: selectedFiles.value.length - failed.length, failed: failed.length }))
-  } else {
-    ElMessage.error(t('fileManager.deleteFailed', { msg: failed.join(', ') }))
-  }
+  scheduleDirectoryRefresh(key, parent)
+  if (failed.length) ElMessage.error(failed.join('\n'))
+  else ElMessage.success(t('fileManager.deleteSuccess'))
 }
-
-const downloadFile = async (row: FileInfo) => {
-    const path = resolvePath(row.name)
-    const transferId = Math.random().toString(36).substring(2)
-    const transfer: Transfer = { id: transferId, name: row.name, type: 'download', progress: 0 }
-    activeTransfers.value.push(transfer)
-    
+const uploadBatch = async (uploadFiles: File[]) => {
+  if (!canOperate.value) return
+  const connection = client.value
+  const key = connection.key
+  const parent = currentPath.value
+  let policy: 'overwrite' | 'skip' | undefined
+  for (const file of uploadFiles) {
     try {
-      const blob = await props.sshConn.sftpDownload(path, (loaded, speed) => {
-        const t = activeTransfers.value.find(x => x.id === transferId)
-        if (t) {
-          t.progress = Math.min(100, Math.round((loaded / row.size) * 100))
-          t.speed = speed
+      assertConnection(key)
+      const path = joinPath(parent, file.name)
+      const existing = await connection.stat(path)
+      let overwrite = false
+      if (existing) {
+        if (existing.isDir || existing.isLink) throw new Error('SFTP_NOT_REGULAR')
+        let choice = policy
+        if (!choice) {
+          const all = ref(false)
+          try {
+            await ElMessageBox.confirm(() => h('div', [h('p', t('sftp.overwritePrompt', { name: file.name })), h(ElCheckbox, { modelValue: all.value, 'onUpdate:modelValue': (value: unknown) => { all.value = !!value } }, () => t('sftp.applyBatch'))]), t('fileManager.warning'), { confirmButtonText: t('fileManager.overwrite'), cancelButtonText: t('sftp.skip'), distinguishCancelAndClose: true })
+            choice = 'overwrite'
+          } catch (action) { if (action === 'cancel') choice = 'skip'; else return }
+          if (all.value) policy = choice
         }
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = row.name
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      ElMessage.success(t('fileManager.downloadSuccess'))
-    } catch (err: any) {
-      ElMessage.error(t('fileManager.downloadFailed', { msg: err.message }))
-    } finally {
-      activeTransfers.value = activeTransfers.value.filter(t => t.id !== transferId)
-    }
-}
-
-const handleDrop = (e: DragEvent) => {
-  dragCounter = 0
-  isDragging.value = false
-  if (editorVisible.value) return
-  const dt = e.dataTransfer
-  if (dt && dt.files) {
-    for (let i = 0; i < dt.files.length; i++) {
-      uploadFile(dt.files[i])
-    }
-  }
-}
-
-const handleFileSelect = (e: Event) => {
-  const target = e.target as HTMLInputElement
-  if (target.files) {
-    for (let i = 0; i < target.files.length; i++) {
-      uploadFile(target.files[i])
-    }
-    target.value = ''
-  }
-}
-
-const uploadFile = async (file: File) => {
-  if (activeTransfers.value.some(t => t.name === file.name && t.type === 'upload')) {
-    ElMessage.warning(t('fileManager.alreadyUploading', { name: file.name }))
-    return
-  }
-
-  const remotePath = resolvePath(file.name)
-  const transferId = Math.random().toString(36).substring(2)
-  const transfer: Transfer = { id: transferId, name: file.name, type: 'upload', progress: 0 }
-  activeTransfers.value.push(transfer)
-
-  try {
-    await props.sshConn.sftpUpload(file, remotePath, (loaded, speed) => {
-      const t = activeTransfers.value.find(x => x.id === transferId)
-      if (t) {
-        t.progress = Math.min(100, Math.round((loaded / file.size) * 100))
-        t.speed = speed
+        if (choice === 'skip') continue
+        overwrite = true
       }
-    })
-    ElMessage.success(t('fileManager.uploadSuccess'))
-    refresh()
-  } catch (err: any) {
-    ElMessage.error(t('fileManager.uploadFailed', { msg: err.message }))
-  } finally {
-    activeTransfers.value = activeTransfers.value.filter(t => t.id !== transferId)
+      assertConnection(key)
+      queueUpload(props.tabId, connection, path, file, overwrite, existing ?? undefined)
+    } catch (error) {
+      ElMessage.error(`${file.name}: ${errorText(error)}`)
+      if (connection.state.phase !== 'ready' || connection.key !== key) return
+    }
   }
 }
+const handleDragEnter = (event: DragEvent) => { if (canOperate.value && event.dataTransfer?.types.includes('Files')) { dragCounter++; isDragging.value = true } }
+const handleDragLeave = () => { if (--dragCounter <= 0) { dragCounter = 0; isDragging.value = false } }
+const handleDrop = (event: DragEvent) => { dragCounter = 0; isDragging.value = false; if (!editorVisible.value && event.dataTransfer) void uploadBatch(Array.from(event.dataTransfer.files)) }
+const handleFileSelect = (event: Event) => { const target = event.target as HTMLInputElement; if (target.files) void uploadBatch(Array.from(target.files)); target.value = '' }
 
 const formatSize = (bytes: number) => {
-  if (bytes === 0) return '0 B'
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.max(0, Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k))))
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
 }
 
@@ -680,6 +529,37 @@ const formatDate = (ms: number) => {
 </script>
 
 <style scoped>
+.fm-actions { border: 0; margin: 0; padding: 0; min-width: 0; }
+.sftp-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.sftp-spinner {
+  flex-shrink: 0;
+  font-size: 18px;
+  animation: sftp-spin 1.2s linear infinite;
+}
+
+@keyframes sftp-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sftp-spinner { animation: none; }
+}
+.transfer-error { color: var(--el-color-danger); overflow-wrap: anywhere; font-size: 12px; }
+
 .file-manager {
   display: flex;
   flex-direction: column;
@@ -690,8 +570,10 @@ const formatDate = (ms: number) => {
 
 .fm-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 8px;
   background-color: var(--el-bg-color-page);
   border-bottom: 1px solid var(--el-border-color-lighter);
@@ -701,13 +583,24 @@ const formatDate = (ms: number) => {
   display: flex;
   align-items: center;
   flex: 1;
-  margin-right: 16px;
+  min-width: 0;
+}
+
+.fm-path-bar > .el-button {
+  flex-shrink: 0;
+}
+
+.path-input {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
 }
 
 .fm-breadcrumbs {
   display: flex;
   align-items: center;
   flex: 1;
+  min-width: 0;
   padding: 0 12px;
   overflow-x: auto;
   white-space: nowrap;
@@ -724,6 +617,13 @@ const formatDate = (ms: number) => {
   cursor: pointer;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+}
+.fm-breadcrumbs :deep(.path-root .el-breadcrumb__separator) {
+  display: none;
+}
+.fm-breadcrumbs :deep(.path-root:not(:last-child)) {
+  margin-right: 8px;
 }
 .fm-breadcrumbs :deep(.el-breadcrumb__inner) {
   cursor: pointer !important;
@@ -736,11 +636,13 @@ const formatDate = (ms: number) => {
   margin-left: 4px;
 }
 .selection-count {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 13px;
   color: var(--el-text-color-secondary);
-  margin-right: 8px;
-  display: flex;
-  align-items: center;
 }
 
 .separator {
@@ -750,10 +652,23 @@ const formatDate = (ms: number) => {
 
 .fm-actions {
   display: flex;
+  flex: 0 0 108px;
+  align-items: center;
+  justify-content: flex-end;
   gap: 4px;
+  white-space: nowrap;
+}
+
+.fm-actions :deep(.el-button) {
+  flex-shrink: 0;
+}
+
+.fm-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .table-container {
+  position: relative;
   flex: 1;
   min-height: 0;
   height: 0;
@@ -825,10 +740,11 @@ const formatDate = (ms: number) => {
 }
 
 .transfers-panel {
+  box-sizing: border-box;
   position: absolute;
   bottom: 20px;
   right: 20px;
-  width: 300px;
+  width: min(300px, calc(100% - 40px));
   background-color: var(--el-bg-color-overlay);
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
@@ -846,20 +762,85 @@ const formatDate = (ms: number) => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+}
+
+.transfer-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content 24px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.transfer-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--el-text-color-primary);
+}
+
+.transfer-status {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.transfer-status.completed { color: var(--el-color-success); }
+.transfer-status.failed { color: var(--el-color-danger); }
+.transfer-status.uncertain { color: var(--el-color-warning); }
+
+.transfer-dismiss {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+}
+
+.transfer-dismiss:hover {
+  background: var(--el-fill-color);
+  color: var(--el-text-color-primary);
+}
+
+.transfer-dismiss:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 1px;
+}
+
+.transfer-save {
+  align-self: flex-end;
+  margin: 0;
 }
 
 .transfer-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
-  color: var(--text-primary);
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
   margin-bottom: 2px;
 }
 
-.transfer-speed {
-  font-size: 12px;
-  color: var(--text-secondary);
+.transfer-info > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-info > span + span {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .drag-overlay {

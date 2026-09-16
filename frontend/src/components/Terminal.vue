@@ -16,17 +16,6 @@
           </el-button>
         </el-tooltip>
 
-        <el-tooltip :content="t('terminal.commandBar') || 'Command Compose'" placement="left">
-          <el-button 
-            class="command-toggle" 
-            :type="showCommandBar ? 'primary' : 'default'"
-            @click="showCommandBar = !showCommandBar" 
-            circle
-          >
-            <el-icon><ChatLineSquare /></el-icon>
-          </el-button>
-        </el-tooltip>
-
         <el-tooltip :content="t('monitor.title')" placement="left">
           <el-button
             class="stats-toggle"
@@ -47,6 +36,17 @@
             circle
           >
             <el-icon><Folder /></el-icon>
+          </el-button>
+        </el-tooltip>
+
+        <el-tooltip :content="t('terminal.commandBar') || 'Command Compose'" placement="left">
+          <el-button
+            class="command-toggle"
+            :type="showCommandBar ? 'primary' : 'default'"
+            @click="showCommandBar = !showCommandBar"
+            circle
+          >
+            <el-icon><ChatLineSquare /></el-icon>
           </el-button>
         </el-tooltip>
       </div>
@@ -91,11 +91,12 @@
       />
     </div>
     
-    <div v-if="showSftp" class="pane-divider"></div>
+    <div v-if="showSftp && sshConn && server" class="pane-divider"></div>
     
     <div class="pane sftp-pane" v-if="showSftp && sshConn && server">
       <FileManager 
         :ssh-conn="sshConn"
+        :tab-id="tabId"
         :initial-path="server.credentials.username === 'root' ? '/root' : `/home/${server.credentials.username}`"
       />
     </div>
@@ -103,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, shallowRef, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -112,11 +113,14 @@ import '@xterm/xterm/css/xterm.css'
 import { SSHConnection } from '../lib/ssh-client'
 import { useServerStore } from '../stores/server'
 import { useSettingsStore } from '../stores/settings'
+import { useTerminalStore, type ConnectionStatus } from '../stores/terminal'
 import { THEMES } from '../lib/themes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { Folder, Odometer, Close, Menu, ChatLineSquare } from '@element-plus/icons-vue'
 import FileManager from './FileManager.vue'
+import { closeTabTransfers } from '../stores/transfers'
+import { getAuthToken, getAuthGeneration } from '../lib/auth-session'
 import ServerStats from './ServerStats.vue'
 import MobileKeyboard from './MobileKeyboard.vue'
 import type { SysStats } from '../lib/ssh-client'
@@ -124,12 +128,13 @@ import { useWindowSize } from '@vueuse/core'
 
 const props = defineProps<{
   serverId: string
-  tabId?: string
+  tabId: string
+  active?: boolean
 }>()
 
 const { width } = useWindowSize()
 const adaptiveFontSize = computed(() => width.value <= 768 ? Math.min(settingsStore.fontSize, 10) : settingsStore.fontSize)
-const adaptivePadding = computed(() => width.value <= 768 ? 4 : settingsStore.padding)
+const adaptivePadding = computed(() => width.value <= 768 ? 4 : 8)
 
 defineEmits<{
   (e: 'toggle-sidebar'): void
@@ -140,14 +145,18 @@ let xterm: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 const sshConn = shallowRef<SSHConnection | null>(null)
-let resizeTimer: ReturnType<typeof setTimeout> | null = null
+let fitFrame: number | null = null
+let layoutRevision = 0
+let disposed = false
 const serverStore = useServerStore()
 const settingsStore = useSettingsStore()
+const terminalStore = useTerminalStore()
+let terminalGeneration = 0
 const { t } = useI18n()
 
 const showSftp = ref(false)
 const showStats = ref(false)
-const showCommandBar = ref(false)
+const showCommandBar = ref(settingsStore.autoOpenCommandBar)
 const commandInput = ref('')
 const sysStats = ref<SysStats | null>(null)
 const server = computed(() => serverStore.servers.find(s => s.id === props.serverId))
@@ -185,8 +194,19 @@ watch(() => sysStats.value, (newVal, oldVal) => {
   }
 })
 
+watch(() => settingsStore.autoOpenCommandBar, (enabled) => {
+  showCommandBar.value = enabled
+})
+
 const initTerminal = () => {
   if (!terminalRef.value) return
+  const generation = ++terminalGeneration
+  const authGeneration = getAuthGeneration()
+  const isCurrent = () => generation === terminalGeneration && authGeneration === getAuthGeneration() && !!getAuthToken()
+  const setStatus = (status: ConnectionStatus) => {
+    if (isCurrent()) terminalStore.setTabStatus(props.tabId, status)
+  }
+  setStatus('connecting')
 
   xterm = new Terminal({
     fontFamily: settingsStore.fontFamily,
@@ -216,9 +236,10 @@ const initTerminal = () => {
     console.warn('WebGL addon failed to load, falling back to canvas', e)
   }
 
-  fitAddon.fit()
+  fitTerminal()
 
   if (!server.value) {
+    setStatus('error')
     xterm.writeln(`\x1b[31m${t('terminal.serverNotFound')}\x1b[0m`)
     return
   }
@@ -227,12 +248,14 @@ const initTerminal = () => {
 
   sshConn.value = new SSHConnection()
   
-  const token = sessionStorage.getItem('jwt') || ''
+  const token = getAuthToken() || ''
 
   const textDecoder = new TextDecoder('utf-8', { fatal: false })
   const ANSI_REGEX = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g
 
   const connectWithPassword = (pwd: string) => {
+    if (!isCurrent() || !server.value) return
+    setStatus('connecting')
     sshConn.value?.connect({
       host: server.value!.credentials.host,
       port: server.value!.credentials.port,
@@ -245,9 +268,14 @@ const initTerminal = () => {
       monitor_interval: settingsStore.monitorInterval || 5,
       encrypt_handshake: settingsStore.encryptHandshake,
       onConnected: () => {
+        if (!isCurrent()) return
+        setStatus('connected')
+        scheduleFit()
         xterm?.writeln(`\x1b[32m${t('terminal.connected')}\x1b[0m\r\n`)
       },
       onHostKeyPrompt: (rawKey: string, fingerprint: string, isMismatch: boolean) => {
+        if (!isCurrent()) return
+        setStatus('awaiting-input')
         const title = isMismatch ? t('terminal.hostKeyPromptMismatchTitle', 'Host key mismatch') : t('terminal.hostKeyPromptTitle', 'Unknown host key');
         const messageHtml = isMismatch 
           ? t('terminal.hostKeyPromptMismatch', { fingerprint }) 
@@ -263,36 +291,40 @@ const initTerminal = () => {
           showClose: false,
           customClass: 'host-key-prompt-box'
         }).then(async () => {
+          if (!isCurrent() || !server.value) return
           try {
-            const updatedCreds = {
-              ...server.value!.credentials,
-              expectedHostKey: rawKey
-            };
-            await serverStore.updateServer(server.value!.id, server.value!.name, updatedCreds);
+            await serverStore.patchServer(server.value!.id, { expectedHostKey: rawKey });
+            if (!isCurrent()) return
             await serverStore.fetchServers();
+            if (!isCurrent()) return
             xterm?.writeln('\r\n\x1b[32m' + t('terminal.hostKeyAccepted') + '\x1b[0m\r\n');
             connectWithPassword(pwd);
           } catch (e: any) {
-            ElMessage.error('Failed to save host key: ' + e.message);
+            if (!isCurrent()) return
+            setStatus('error')
+            ElMessage.error(t('vault.hostKeySaveFailed') + ': ' + e.message);
           }
         }).catch(() => {
+          if (!isCurrent()) return
+          setStatus('disconnected')
           xterm?.writeln('\r\n\x1b[31m' + t('terminal.connectionCancelled', 'Connection cancelled.') + '\x1b[0m\r\n');
         });
       },
     onOsInfo: async (os: string) => {
-      if (server.value && server.value.credentials.os !== os) {
-        const newCredentials = { ...server.value.credentials, os }
+      if (isCurrent() && server.value && server.value.credentials.os !== os) {
         try {
-          await serverStore.updateServer(server.value.id, server.value.name, newCredentials)
+          await serverStore.patchServer(server.value.id, { os })
         } catch (e) {
           console.error('Failed to update OS info', e)
         }
       }
     },
     onSysStats: (stats: SysStats) => {
+      if (!isCurrent()) return
       sysStats.value = stats
     },
     onData: (data: Uint8Array) => {
+      if (!isCurrent()) return
       if (settingsStore.keywordHighlight) {
         let text = textDecoder.decode(data, { stream: true })
         if (text) {
@@ -334,16 +366,22 @@ const initTerminal = () => {
       }
     },
     onError: (err: Error) => {
+      if (!isCurrent()) return
+      setStatus('error')
       xterm?.writeln(`\r\n\x1b[31m${t('terminal.connError', { msg: err.message })}\x1b[0m\r\n`)
       ElMessage.error(t('terminal.sshError', { msg: err.message }))
     },
     onClose: () => {
+      if (!isCurrent()) return
+      setStatus('disconnected')
+      sysStats.value = null
       xterm?.writeln(`\r\n\x1b[33m${t('terminal.closed')}\x1b[0m\r\n`)
     }
   })
 }
 
 if (!server.value.credentials.password) {
+  setStatus('awaiting-input')
   ElMessageBox.prompt(t('serverForm.password'), t('terminal.authRequired', 'Authentication Required'), {
     confirmButtonText: t('serverList.connect', 'Connect'),
     cancelButtonText: t('serverForm.cancel', 'Cancel'),
@@ -352,6 +390,8 @@ if (!server.value.credentials.password) {
   }).then(({ value }) => {
     connectWithPassword(value)
   }).catch(() => {
+    if (!isCurrent()) return
+    setStatus('disconnected')
     xterm?.writeln(`\x1b[31m${t('terminal.connectionCancelled', 'Connection cancelled.')}\x1b[0m\r\n`)
   })
 } else {
@@ -359,6 +399,7 @@ if (!server.value.credentials.password) {
 }
 
   xterm.onData((data) => {
+    if (!isCurrent()) return
     if (sshConn.value) {
       if (ctrlActive.value || altActive.value) {
         if (data.length === 1) {
@@ -398,93 +439,96 @@ if (!server.value.credentials.password) {
   })
 
   xterm.onResize(({ cols, rows }) => {
-    sshConn.value?.resize(cols, rows)
+    if (isTerminalVisible()) sshConn.value?.resize(cols, rows)
   })
 
-  // Immediately sync current terminal size to SSH server
-  sshConn.value?.resize(xterm.cols, xterm.rows)
-
-  // ResizeObserver watches the INNER div — the actual xterm mount point.
-  // When outer padding changes, the inner div shrinks/grows, triggering refit.
-  resizeObserver = new ResizeObserver(() => {
-    debouncedFit()
-  })
+  // All layout changes share the same visibility-aware scheduler
+  resizeObserver = new ResizeObserver(scheduleFit)
   resizeObserver.observe(terminalRef.value)
-
-  // Fallback: window resize catches fullscreen <-> windowed transitions
-  window.addEventListener('resize', handleWindowResize)
+  scheduleFit()
 }
 
-const debouncedFit = () => {
-  if (resizeTimer) clearTimeout(resizeTimer)
-  resizeTimer = setTimeout(() => {
-    if (fitAddon) {
-      try {
-        fitAddon.fit()
-      } catch (_e) {
-        // ignore fit errors during rapid resizing
-      }
-    }
-  }, 30)
+function isTerminalVisible() {
+  const element = terminalRef.value
+  return !disposed && props.active !== false && !document.hidden &&
+    element?.isConnected && element.getClientRects().length > 0 &&
+    element.clientWidth > 0 && element.clientHeight > 0
 }
 
-const handleWindowResize = () => {
-  debouncedFit()
+function fitTerminal() {
+  if (!xterm || !fitAddon || !isTerminalVisible()) return
+  // Defer font measurements for hidden sessions until they are visible again
+  if (xterm.options.fontFamily !== settingsStore.fontFamily) {
+    xterm.options.fontFamily = settingsStore.fontFamily
+  }
+  if (xterm.options.fontSize !== adaptiveFontSize.value) {
+    xterm.options.fontSize = adaptiveFontSize.value
+  }
+  fitAddon.fit()
+  // Also sync when the local grid is unchanged, e.g. after SSH becomes ready
+  sshConn.value?.resize(xterm.cols, xterm.rows)
+  xterm.refresh(0, xterm.rows - 1)
+}
+
+function cancelScheduledFit() {
+  layoutRevision++
+  if (fitFrame !== null) cancelAnimationFrame(fitFrame)
+  fitFrame = null
+}
+
+function scheduleFit() {
+  cancelScheduledFit()
+  if (disposed || props.active === false) return
+  const revision = layoutRevision
+  const generation = terminalGeneration
+  void nextTick(() => {
+    if (revision !== layoutRevision || generation !== terminalGeneration || !isTerminalVisible()) return
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = null
+      if (revision !== layoutRevision || generation !== terminalGeneration) return
+      fitTerminal()
+    })
+  })
+}
+
+function disposeTerminal() {
+  const connection = sshConn.value
+  // Allow cancelled transfers to remove their own temporary files before disconnecting
+  void closeTabTransfers(props.tabId).finally(() => connection?.disconnect())
+  terminalGeneration++
+  cancelScheduledFit()
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  sshConn.value = null
+  xterm?.dispose()
+  xterm = null
+  fitAddon = null
 }
 
 onMounted(() => {
   initTerminal()
+  window.addEventListener('resize', scheduleFit)
+  document.addEventListener('visibilitychange', scheduleFit)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleWindowResize)
-  if (resizeTimer) clearTimeout(resizeTimer)
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
-  if (sshConn.value) {
-    sshConn.value.disconnect()
-  }
-  if (xterm) {
-    xterm.dispose()
-  }
+  disposed = true
+  window.removeEventListener('resize', scheduleFit)
+  document.removeEventListener('visibilitychange', scheduleFit)
+  disposeTerminal()
 })
+
+watch(() => props.active, (active) => {
+  if (active === false) cancelScheduledFit()
+  else scheduleFit()
+}, { flush: 'post' })
 
 watch(() => props.serverId, () => {
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
-  if (sshConn.value) {
-    sshConn.value.disconnect()
-  }
-  if (xterm) {
-    xterm.dispose()
-  }
+  disposeTerminal()
   initTerminal()
-})
+}, { flush: 'post' })
 
-watch(() => settingsStore.fontFamily, (newFont) => {
-  if (xterm) {
-    xterm.options.fontFamily = newFont
-    fitAddon?.fit()
-  }
-})
-
-watch(() => settingsStore.fontSize, () => {
-  if (xterm) {
-    xterm.options.fontSize = adaptiveFontSize.value
-    fitAddon?.fit()
-  }
-})
-
-watch(adaptiveFontSize, (newSize) => {
-  if (xterm) {
-    xterm.options.fontSize = newSize
-    fitAddon?.fit()
-  }
-})
+watch([() => settingsStore.fontFamily, adaptiveFontSize], scheduleFit, { flush: 'post' })
 
 watch(() => settingsStore.theme, (newTheme) => {
   if (xterm) {
@@ -492,18 +536,7 @@ watch(() => settingsStore.theme, (newTheme) => {
   }
 })
 
-watch(showSftp, () => {
-  // Give DOM time to update flex layout before fitting
-  setTimeout(() => {
-    debouncedFit()
-  }, 100)
-})
-
-watch(showCommandBar, () => {
-  setTimeout(() => {
-    debouncedFit()
-  }, 100)
-})
+watch([showSftp, showCommandBar, () => settingsStore.sftpLayout, adaptivePadding], scheduleFit, { flush: 'post' })
 </script>
 
 <style scoped>
@@ -526,6 +559,7 @@ watch(showCommandBar, () => {
 
 .terminal-pane {
   flex: 1;
+  background-color: var(--term-bg);
   min-width: 0; /* important for flexbox to shrink */
   min-height: 0; /* important for column flexbox to shrink */
   display: flex;
@@ -533,24 +567,25 @@ watch(showCommandBar, () => {
 }
 
 .sftp-pane {
-  width: 380px;
-  min-width: 300px;
+  width: min(380px, 45%);
+  min-width: 0;
+  min-height: 0;
+  flex-shrink: 0;
+  overflow: hidden;
   background-color: var(--el-bg-color);
   border-left: 1px solid var(--el-border-color-light);
 }
 
 .layout-bottom .sftp-pane {
   width: 100%;
-  min-width: unset;
-  height: 380px;
-  min-height: 200px;
-  flex-shrink: 0;
+  height: min(380px, 45%);
   border-left: none;
   border-top: 1px solid var(--el-border-color-light);
 }
 
 .pane-divider {
   width: 2px;
+  flex-shrink: 0;
   background-color: var(--el-border-color);
   cursor: col-resize;
 }
@@ -658,7 +693,7 @@ watch(showCommandBar, () => {
   }
   .sftp-pane {
     width: 100% !important;
-    height: 45vh !important;
+    height: 45% !important;
     min-width: unset !important;
     border-left: none !important;
     border-top: 1px solid var(--el-border-color-light) !important;
@@ -678,7 +713,7 @@ watch(showCommandBar, () => {
 .terminal-outer {
   flex: 1;
   width: 100%;
-  height: 100%;
+  min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
 }

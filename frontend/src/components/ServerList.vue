@@ -99,6 +99,7 @@
 </template>
 
 <script setup lang="ts">
+import { getAuthGeneration, getAuthToken } from '../lib/auth-session'
 import { onMounted, ref, watch, computed } from 'vue'
 import { useServerStore } from '../stores/server'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -230,6 +231,7 @@ const handleCommand = (command: string, row: any) => {
 }
 
 const confirmDelete = (id: string) => {
+  const generation = getAuthGeneration()
   ElMessageBox.confirm(
     t('serverList.deleteConfirm'),
     t('serverList.deleteServer'),
@@ -240,6 +242,7 @@ const confirmDelete = (id: string) => {
       confirmButtonClass: 'el-button--danger'
     }
   ).then(async () => {
+    if (generation !== getAuthGeneration() || !getAuthToken()) return
     try {
       await serverStore.deleteServer(id)
       ElMessage.success(t('serverList.deleteSuccess'))

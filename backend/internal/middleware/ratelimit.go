@@ -20,7 +20,6 @@ var rl = &rateLimiter{
 func RateLimit(maxRequests int, perMinute int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rl.mu.Lock()
-		defer rl.mu.Unlock()
 
 		ip := c.ClientIP()
 		now := time.Now()
@@ -36,6 +35,7 @@ func RateLimit(maxRequests int, perMinute int) gin.HandlerFunc {
 		rl.clients[ip] = recent
 
 		if len(recent) >= maxRequests {
+			rl.mu.Unlock()
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "请求过于频繁，请稍后再试",
 			})
@@ -43,6 +43,7 @@ func RateLimit(maxRequests int, perMinute int) gin.HandlerFunc {
 		}
 
 		rl.clients[ip] = append(rl.clients[ip], now)
+		rl.mu.Unlock()
 		c.Next()
 	}
 }

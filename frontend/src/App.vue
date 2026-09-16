@@ -2,9 +2,10 @@
   <el-container class="app-layout">
     <el-main class="app-main no-nav">
       <div v-if="authStore.isInitialized" class="main-content-wrapper">
+        <VaultSaveNotice v-if="authStore.isAuthenticated" />
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
-            <component :is="Component" />
+            <component :is="Component" v-if="!$route.meta.requiresAuth || authStore.isAuthenticated" />
           </transition>
         </router-view>
       </div>
@@ -17,22 +18,23 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useSettingsStore } from './stores/settings'
+import VaultSaveNotice from './components/VaultSaveNotice.vue'
 import { Loading } from '@element-plus/icons-vue'
 
 const authStore = useAuthStore()
-const settingsStore = useSettingsStore()
+useSettingsStore()
+const router = useRouter()
+
+watch(() => authStore.isAuthenticated, authenticated => {
+  if (!authenticated && router.currentRoute.value.meta.requiresAuth) void router.replace('/setup')
+}, { flush: 'sync' })
 
 onMounted(async () => {
-  await authStore.checkStatus()
-  if (sessionStorage.getItem('jwt') && sessionStorage.getItem('enc_key')) {
-    await authStore.restoreSession()
-    settingsStore.fetchCloudSettings()
-  } else {
-    authStore.logout()
-  }
+  await authStore.initialize()
 })
 </script>
 

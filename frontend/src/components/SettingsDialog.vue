@@ -8,6 +8,7 @@
     class="settings-dialog"
   >
     <el-scrollbar max-height="65vh" class="dialog-scrollbar">
+      <el-alert v-if="saveError" :title="saveError" type="error" :closable="false" show-icon />
       <el-form label-position="top" class="settings-form">
         <div class="settings-section">
           <h3 class="section-title">{{ $t('settings.appAppearance') }}</h3>
@@ -69,19 +70,6 @@
           </div>
         </el-form-item>
 
-        <el-form-item :label="$t('settings.padding') || '终端内边距 (Padding)'">
-          <div class="slider-wrapper">
-            <el-slider 
-              v-model="localSettings.padding" 
-              :min="0" 
-              :max="32" 
-              :step="2"
-              @change="saveSettings"
-              show-input
-            />
-          </div>
-        </el-form-item>
-
         <el-form-item :label="$t('settings.theme')">
           <el-select v-model="localSettings.theme" @change="saveSettings" size="large" class="full-width">
             <el-option 
@@ -112,6 +100,14 @@
               <el-checkbox v-model="localSettings.kwIpMac" @change="saveSettings" border class="kw-checkbox kw-ip">IP / MAC</el-checkbox>
             </div>
           </el-collapse-transition>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-header">
+            <h3 class="section-title no-border">{{ $t('settings.autoOpenCommandBar') }}</h3>
+            <el-switch v-model="localSettings.autoOpenCommandBar" @change="saveSettings" />
+          </div>
+          <div class="setting-desc section-desc">{{ $t('settings.autoOpenCommandBarDesc') }}</div>
         </div>
 
         <div class="settings-section">
@@ -149,6 +145,7 @@ import { ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { THEMES } from '../lib/themes'
 import { Check } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   modelValue: boolean
@@ -159,13 +156,14 @@ const emit = defineEmits<{
 }>()
 
 const settingsStore = useSettingsStore()
+const { t, te } = useI18n()
+const saveError = ref('')
 
 // Local copy for reactive two-way binding
 const localSettings = ref({
   fontFamily: settingsStore.fontFamily,
   fontSize: settingsStore.fontSize,
   theme: settingsStore.theme,
-  padding: settingsStore.padding,
   keywordHighlight: settingsStore.keywordHighlight,
   kwError: settingsStore.kwError,
   kwWarning: settingsStore.kwWarning,
@@ -177,6 +175,7 @@ const localSettings = ref({
   primaryColor: settingsStore.primaryColor,
   sftpLayout: settingsStore.sftpLayout,
   autoOpenMonitor: settingsStore.autoOpenMonitor,
+  autoOpenCommandBar: settingsStore.autoOpenCommandBar,
   monitorInterval: settingsStore.monitorInterval,
   encryptHandshake: settingsStore.encryptHandshake
 })
@@ -200,7 +199,6 @@ watch(() => props.modelValue, (newVal) => {
     localSettings.value = {
       fontFamily: settingsStore.fontFamily,
       fontSize: settingsStore.fontSize,
-      padding: settingsStore.padding,
       theme: settingsStore.theme,
       keywordHighlight: settingsStore.keywordHighlight,
       kwError: settingsStore.kwError,
@@ -213,6 +211,7 @@ watch(() => props.modelValue, (newVal) => {
       primaryColor: settingsStore.primaryColor,
       sftpLayout: settingsStore.sftpLayout,
       autoOpenMonitor: settingsStore.autoOpenMonitor,
+      autoOpenCommandBar: settingsStore.autoOpenCommandBar,
       monitorInterval: settingsStore.monitorInterval,
       encryptHandshake: settingsStore.encryptHandshake
     }
@@ -220,8 +219,18 @@ watch(() => props.modelValue, (newVal) => {
 })
 
 const saveSettings = () => {
-  settingsStore.updateSettings(localSettings.value)
+  saveError.value = ''
+  try { settingsStore.updateSettings(localSettings.value) }
+  catch (error) {
+    const message = error instanceof Error ? error.message : 'vault.saveFailed'
+    saveError.value = te(message) ? t(message) : message
+    localSettings.value = { ...settingsStore.state }
+  }
 }
+
+watch(() => settingsStore.state, current => {
+  localSettings.value = { ...current }
+}, { deep: true })
 </script>
 
 <style scoped>

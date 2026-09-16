@@ -1,262 +1,135 @@
 import { defineStore } from 'pinia'
-import { api } from '../lib/api'
-import { encryptServerData, decryptServerData } from '../lib/crypto'
-import type { ServerEntry, ServerCredentials } from '../types'
-import { useAuthStore } from './auth'
+import { computed, onScopeDispose, ref } from 'vue'
+import { i18n } from '../i18n'
+import { vaultRepository } from '../lib/vault-repository'
+import { MAX_VAULT_JSON_BYTES, validateVaultServer } from '../lib/vault-schema'
+import type { ServerEntry, ServerCredentials, VaultPayload, VaultServer } from '../types'
 
 export interface DecryptedServer extends ServerEntry {
-  name: string;
-  credentials: ServerCredentials;
+  name: string
+  credentials: ServerCredentials
 }
 
-interface ServerState {
-  servers: DecryptedServer[];
-  isLoading: boolean;
-  error: string | null;
+function userError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : 'vault.saveFailed'
+  return new Error(message.startsWith('vault.') ? i18n.global.t(message) : message)
 }
 
-export const useServerStore = defineStore('server', {
-  state: (): ServerState => ({
-    servers: [],
-    isLoading: false,
-    error: null,
-  }),
-  getters: {
-    availableGroups(state): string[] {
-      const groups = new Set<string>()
-      for (const srv of state.servers) {
-        if (srv.credentials.group) {
-          groups.add(srv.credentials.group)
-        }
-      }
-      return Array.from(groups).sort()
-    },
-    groupedServers(state): Record<string, DecryptedServer[]> {
-      const groups: Record<string, DecryptedServer[]> = {}
-      for (const srv of state.servers) {
-        const groupName = srv.credentials.group || ''
-        if (!groups[groupName]) {
-          groups[groupName] = []
-        }
-        groups[groupName].push(srv)
-      }
-      return groups
-    },
-    availableTags(state): string[] {
-      const tags = new Set<string>()
-      for (const srv of state.servers) {
-        if (srv.credentials.tags && Array.isArray(srv.credentials.tags)) {
-          for (const tag of srv.credentials.tags) {
-            if (tag.trim()) tags.add(tag.trim())
-          }
-        }
-      }
-      return Array.from(tags).sort()
+export const useServerStore = defineStore('server', () => {
+  const servers = ref<DecryptedServer[]>([])
+  const isLoading = ref(false)
+  const error = ref<string | null>(null)
+
+  const project = (payload: VaultPayload | null) => {
+    servers.value = (payload?.servers || []).map(({ id, ...credentials }) => ({
+      id, name: credentials.name || credentials.host, credentials,
+    })).sort((a, b) => Date.parse(b.credentials.createdAt || '') - Date.parse(a.credentials.createdAt || '') || a.id.localeCompare(b.id))
+    isLoading.value = false
+    error.value = null
+  }
+  onScopeDispose(vaultRepository.subscribe(project))
+
+  const availableGroups = computed(() => [...new Set(servers.value.map(server => server.credentials.group).filter((group): group is string => !!group))].sort())
+  const groupedServers = computed(() => {
+    const groups: Record<string, DecryptedServer[]> = Object.create(null)
+    for (const server of servers.value) (groups[server.credentials.group || ''] ||= []).push(server)
+    return groups
+  })
+  const availableTags = computed(() => [...new Set(servers.value.flatMap(server => server.credentials.tags || []).map(tag => tag.trim()).filter(Boolean))].sort())
+
+  async function change(mutation: (draft: VaultPayload) => void) {
+    const generation = vaultRepository.getGeneration()
+    try { await vaultRepository.mutate(mutation) }
+    catch (cause) {
+      const failure = userError(cause)
+      if (generation === vaultRepository.getGeneration()) error.value = failure.message
+      throw failure
     }
-  },
-  actions: {
-    async fetchServers() {
-      const authStore = useAuthStore()
-      if (!authStore.encKey) throw new Error('Encryption key not loaded')
-      
-      this.isLoading = true
-      this.error = null
-      
-      try {
-        const encryptedServers = await api.getServers()
-        const decrypted: DecryptedServer[] = []
-        
-        for (const srv of encryptedServers) {
-          try {
-            const credentials = await decryptServerData(srv.encryptedData, srv.iv, authStore.encKey)
-            decrypted.push({ 
-              ...srv, 
-              name: credentials.name || 'Unnamed Server',
-              credentials 
-            })
-          } catch (err) {
-            console.error(`Failed to decrypt server ${srv.id}`, err)
-            // Still push it so user can delete it, but with dummy credentials
-            decrypted.push({
-              ...srv,
-              name: 'Decryption Failed',
-              credentials: { name: 'Decryption Failed', host: 'Decryption Failed', port: 22, username: 'unknown', password: '' }
-            })
-          }
-        }
-        // Sort by createdAt descending
-        decrypted.sort((a, b) => {
-          const tA = a.credentials.createdAt ? new Date(a.credentials.createdAt).getTime() : 0;
-          const tB = b.credentials.createdAt ? new Date(b.credentials.createdAt).getTime() : 0;
-          return tB - tA;
-        })
-        
-        this.servers = decrypted
-      } catch (err: any) {
-        this.error = err.message || 'Failed to fetch servers'
-      } finally {
-        this.isLoading = false
-      }
-    },
+  }
 
-    async addServer(name: string, credentials: ServerCredentials) {
-      const authStore = useAuthStore()
-      if (!authStore.encKey) throw new Error('Encryption key not loaded')
-      
+  async function fetchServers() {
+    if (!vaultRepository.isReady()) throw userError(new Error('vault.locked'))
+    // Authentication already loaded the complete vault, never issue a separate stale server read
+    project(vaultRepository.getSnapshot())
+  }
+
+  async function addServer(name: string, credentials: ServerCredentials) {
+    await change(draft => {
       const now = new Date().toISOString()
-      const credentialsWithname = { ...credentials, name, createdAt: now, updatedAt: now }
-      const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
-      
-      await api.createServer({ encryptedData, iv })
-      await this.fetchServers()
-    },
+      draft.servers.push(validateVaultServer({ ...credentials, id: crypto.randomUUID(), name, createdAt: now, updatedAt: now }))
+    })
+  }
 
-    async updateServer(id: string, name: string, credentials: ServerCredentials) {
-      const authStore = useAuthStore()
-      if (!authStore.encKey) throw new Error('Encryption key not loaded')
-      
-      const existing = this.servers.find(s => s.id === id)
-      const createdAt = existing?.credentials.createdAt || new Date().toISOString()
+  async function updateServer(id: string, name: string, credentials: ServerCredentials) {
+    await change(draft => {
+      const index = draft.servers.findIndex(server => server.id === id)
+      if (index < 0) throw new Error('vault.sourceDeleted')
       const now = new Date().toISOString()
-      
-      const credentialsWithname = { ...credentials, name, createdAt, updatedAt: now }
-      const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
-      
-      await api.updateServer(id, { encryptedData, iv })
-      await this.fetchServers()
-    },
+      draft.servers[index] = validateVaultServer({ ...credentials, id, name, createdAt: draft.servers[index]!.createdAt || now, updatedAt: now })
+    })
+  }
 
-    async deleteServer(id: string) {
-      await api.deleteServer(id)
-      await this.fetchServers()
-    },
+  async function patchServer(id: string, partial: Partial<ServerCredentials>) {
+    await change(draft => {
+      const index = draft.servers.findIndex(server => server.id === id)
+      if (index < 0) throw new Error('vault.sourceDeleted')
+      draft.servers[index] = validateVaultServer({ ...draft.servers[index], ...partial, id, updatedAt: new Date().toISOString() })
+    })
+  }
 
-    async batchDeleteServers(ids: string[]) {
-      await Promise.all(ids.map(id => api.deleteServer(id)))
-      await this.fetchServers()
-    },
+  async function batchDeleteServers(ids: string[]) {
+    const selected = new Set(ids)
+    await change(draft => { draft.servers = draft.servers.filter(server => !selected.has(server.id)) })
+  }
+  async function deleteServer(id: string) { await batchDeleteServers([id]) }
 
-    exportServersJSON(ids?: string[]) {
-      const serversToExport = ids && ids.length > 0
-        ? this.servers.filter(s => ids.includes(s.id))
-        : this.servers
+  function exportServersJSON(ids?: string[]) {
+    const selected = ids?.length ? servers.value.filter(server => ids.includes(server.id)) : servers.value
+    const data = { version: 1, servers: selected.map(server => ({ ...server.credentials, name: server.name })) }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `webssh_servers_${new Date().toISOString().split('T')[0]}_${crypto.randomUUID().slice(0, 8)}.json`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }
 
-      const data = {
-        version: 1,
-        servers: serversToExport.map(s => ({
-          name: s.name,
-          group: s.credentials.group,
-          host: s.credentials.host,
-          port: s.credentials.port,
-          username: s.credentials.username,
-          password: s.credentials.password,
-          os: s.credentials.os,
-          expectedHostKey: s.credentials.expectedHostKey
-        }))
-      }
-      
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const dateStr = new Date().toISOString().split('T')[0]
-      const randomId = crypto.randomUUID().split('-')[0] // short 8 chars uuid
-      a.download = `webssh_servers_${dateStr}_${randomId}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    },
-
-    async importServersJSON(jsonStr: string, mode: 'dry-run' | 'overwrite' | 'skip') {
-      try {
-        const data = JSON.parse(jsonStr)
-        let serversToImport: any[] = []
-        if (data.version === 1 && Array.isArray(data.servers)) {
-          serversToImport = data.servers
-        } else if (Array.isArray(data)) {
-          serversToImport = data // allow raw array import
-        } else {
-          throw new Error('Invalid backup file format')
-        }
-        
-        const authStore = useAuthStore()
-        if (!authStore.encKey) throw new Error('Encryption key not loaded')
-        
-        let importedCount = 0
-        let conflictsCount = 0
-        
-        for (const srv of serversToImport) {
-          if (!srv.host || !srv.username) continue
-          
-          const srvPort = Number(srv.port) || 22
-          const existing = this.servers.find(
-            s => s.credentials.host === srv.host && 
-                 s.credentials.port === srvPort && 
-                 s.credentials.username === srv.username
-          )
-          
-          if (existing) {
-            conflictsCount++
-            if (mode === 'dry-run') continue
-            if (mode === 'skip') continue
-          } else {
-            if (mode === 'dry-run') continue
-          }
-          
-          const credentials = {
-            group: srv.group || undefined,
-            tags: Array.isArray(srv.tags) ? srv.tags : undefined,
-            host: srv.host,
-            port: srvPort,
-            username: srv.username,
-            password: srv.password || '',
-            os: srv.os,
-            expectedHostKey: srv.expectedHostKey
-          }
-          
+  async function importServersJSON(json: string, mode: 'dry-run' | 'overwrite' | 'skip') {
+    try {
+      if (new TextEncoder().encode(json).length > MAX_VAULT_JSON_BYTES) throw new Error('vault.tooLarge')
+      const data: unknown = JSON.parse(json)
+      const rows = Array.isArray(data) ? data : data && typeof data === 'object' && 'version' in data && data.version === 1 && 'servers' in data && Array.isArray(data.servers) ? data.servers : null
+      if (!rows) throw new Error('vault.invalidData')
+      if (!vaultRepository.isReady()) throw new Error('vault.locked')
+      let conflicts = 0, imported = 0
+      const apply = (draft: VaultPayload) => {
+        for (const row of rows) {
+          if (!row || typeof row !== 'object' || !row.host || !row.username) continue
+          const candidate = validateVaultServer({
+            id: crypto.randomUUID(), name: row.name || row.host, group: row.group, tags: row.tags,
+            host: row.host, port: Number(row.port) || 22, username: row.username, password: row.password ?? '',
+            os: row.os, expectedHostKey: row.expectedHostKey,
+          })
+          const existing = draft.servers.find(server => server.host === candidate.host && server.port === candidate.port && server.username === candidate.username)
+          if (existing) conflicts++
+          if (mode === 'dry-run' || existing && mode === 'skip') continue
           const now = new Date().toISOString()
-          
-          if (existing && mode === 'overwrite') {
-            const createdAt = existing.credentials.createdAt || now
-            const credentialsWithname = { ...credentials, name: srv.name || srv.host, createdAt, updatedAt: now }
-            const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
-            await api.updateServer(existing.id, { encryptedData, iv })
-            importedCount++
-          } else {
-            const credentialsWithname = { ...credentials, name: srv.name || srv.host, createdAt: now, updatedAt: now }
-            const { encryptedData, iv } = await encryptServerData(credentialsWithname, authStore.encKey)
-            await api.createServer({ encryptedData, iv })
-            importedCount++
-          }
+          const next: VaultServer = { ...candidate, id: existing?.id || candidate.id, createdAt: existing?.createdAt || now, updatedAt: now }
+          if (existing) draft.servers[draft.servers.indexOf(existing)] = next
+          else draft.servers.push(next)
+          imported++
         }
-        
-        if (mode !== 'dry-run') {
-          await this.fetchServers()
-        }
-        
-        return { total: serversToImport.length, conflicts: conflictsCount, imported: importedCount }
-      } catch (err: any) {
-        throw new Error('Failed to import servers: ' + err.message)
       }
-    },
+      if (mode === 'dry-run') apply(vaultRepository.getSnapshot()!)
+      else await change(apply)
+      return { total: rows.length, conflicts, imported }
+    } catch (cause) { throw userError(cause) }
+  }
 
-    async reEncryptAll(newKey: CryptoKey): Promise<import('../types').RekeyServerEntry[]> {
-      if (this.servers.length === 0 && !this.isLoading && !this.error) {
-        // Might be truly empty, but let's ensure it's loaded
-        await this.fetchServers()
-      }
-      
-      const rekeyedServers: import('../types').RekeyServerEntry[] = []
-      for (const srv of this.servers) {
-        if (srv.credentials.host === 'Decryption Failed') {
-          throw new Error(`Cannot re-key because server ${srv.name} failed to decrypt previously.`)
-        }
-        const credentialsWithname = { ...srv.credentials, name: srv.name }
-        const { encryptedData, iv } = await encryptServerData(credentialsWithname, newKey)
-        rekeyedServers.push({ id: srv.id, encryptedData, iv })
-      }
-      return rekeyedServers
-    }
+  return {
+    servers, isLoading, error, availableGroups, groupedServers, availableTags,
+    fetchServers, addServer, updateServer, patchServer, deleteServer, batchDeleteServers, exportServersJSON, importServersJSON,
   }
 })

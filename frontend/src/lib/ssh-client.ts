@@ -4,13 +4,9 @@
 
 declare const Go: any;
 
-export interface FileInfo {
-  name: string
-  isDir: boolean
-  size: number
-  modTime: number
-  permissions: string
-}
+import { SftpClient, type SftpState } from './sftp-client'
+import { getAuthGeneration, getAuthToken } from './auth-session'
+export type { FileInfo } from './sftp-client'
 
 export interface NetStats {
   rx_bps: number
@@ -48,6 +44,13 @@ export interface SSHConnectOptions {
 
 let wasmInitialized = false;
 let wasmInitializing: Promise<void> | null = null;
+const activeConnections = new Set<SSHConnection>();
+
+// Capture only the old session, a new unlock may start connections during cleanup
+export function captureSSHConnectionCleanup(): () => void {
+  const connections = [...activeConnections];
+  return () => { for (const connection of connections) connection.disconnect(); };
+}
 
 async function initWasm() {
   if (wasmInitialized) return;
@@ -64,19 +67,37 @@ async function initWasm() {
       throw e;
     }
   })();
-  return wasmInitializing;
+  try {
+    await wasmInitializing;
+  } catch (error) {
+    wasmInitializing = null;
+    throw error;
+  }
 }
 
 export class SSHConnection {
+  readonly sftp = new SftpClient();
   private config: any = null;
+  private generation = 0;
+  private pendingSize: { cols: number; rows: number } | null = null;
+  private sentSize: { cols: number; rows: number } | null = null;
+  private ready = false;
 
   async connect(opts: SSHConnectOptions): Promise<void> {
+    this.disconnect();
+    activeConnections.add(this);
+    this.resize(opts.cols || 80, opts.rows || 24);
+    const generation = this.generation;
+    const authGeneration = getAuthGeneration();
+    let finished = false;
+    const isCurrent = () => generation === this.generation && authGeneration === getAuthGeneration() && !!getAuthToken() && !finished;
     try {
       await initWasm();
     } catch (e: any) {
-      opts.onError?.(new Error("WASM 加载失败: " + e.message));
+      if (isCurrent()) opts.onError?.(new Error("WASM 加载失败: " + e.message));
       return;
     }
+    if (!isCurrent()) return;
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/ws/tcp-proxy`;
@@ -91,9 +112,10 @@ export class SSHConnection {
       expectedHostKey: opts.expectedHostKey || "",
       monitor_interval: opts.monitor_interval || 5,
       encrypt_handshake: opts.encrypt_handshake ?? true,
-      cols: opts.cols || 80,
-      rows: opts.rows || 24,
+      cols: this.pendingSize?.cols ?? 80,
+      rows: this.pendingSize?.rows ?? 24,
       onData: (b64: string) => {
+        if (!isCurrent()) return;
         const binaryStr = atob(b64);
         const bytes = new Uint8Array(binaryStr.length);
         for (let i = 0; i < binaryStr.length; i++) {
@@ -102,27 +124,48 @@ export class SSHConnection {
         opts.onData?.(bytes);
       },
       onClose: (msg: string) => {
+        if (!isCurrent()) return;
+        finished = true;
+        this.sftp.disconnect();
+        this.ready = false;
         if (msg && msg !== "SSH connection closed") {
           opts.onError?.(new Error(msg));
         }
         opts.onClose?.();
       },
+      onSftpState: (state: SftpState, message: string) => {
+        if (isCurrent()) this.sftp.update(state, message);
+      },
       onReady: () => {
+        if (!isCurrent()) return;
+        this.ready = true;
         opts.onConnected?.();
+        // Return from the Go callback before invoking its resize callback
+        queueMicrotask(() => { if (isCurrent()) this.flushResize(); });
       },
       onHostKeyPrompt: (rawKey: string, fingerprint: string, isMismatch: boolean) => {
+        if (!isCurrent()) return;
+        finished = true; // This attempt ends while the user decides whether to reconnect
+        this.ready = false;
         opts.onHostKeyPrompt?.(rawKey, fingerprint, isMismatch);
       },
       onOsInfo: (os: string) => {
-        opts.onOsInfo?.(os);
+        if (isCurrent()) opts.onOsInfo?.(os);
       },
       onSysStats: (stats: any) => {
-        opts.onSysStats?.(stats);
+        if (isCurrent()) opts.onSysStats?.(stats);
       }
     };
 
+    this.sftp.attach(this.config, generation);
+
     // startWasmSSH is injected into the global scope by main.wasm
-    (window as any).startWasmSSH(this.config);
+    try {
+      (window as any).startWasmSSH(this.config);
+    } catch (error) {
+      if (isCurrent()) opts.onError?.(error instanceof Error ? error : new Error(String(error)));
+      this.disconnect();
+    }
   }
 
   sendInput(data: string): void {
@@ -136,147 +179,38 @@ export class SSHConnection {
   }
 
   resize(cols: number, rows: number): void {
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 1) return
+    // Keep the latest valid grid even before WASM has produced a config
+    this.pendingSize = { cols, rows }
     if (!this.config) return
+    this.config.cols = cols
+    this.config.rows = rows
     this.config.__pendingRows = rows
     this.config.__pendingCols = cols
-    if (this.config.resize) {
-      this.config.resize(rows, cols) // WASM expects rows, cols
-    }
+    this.flushResize()
+  }
+
+  private flushResize(): void {
+    const size = this.pendingSize
+    if (!this.ready || !size || !this.config?.resize) return
+    if (this.sentSize?.cols === size.cols && this.sentSize.rows === size.rows) return
+    this.config.resize(size.rows, size.cols) // WASM expects rows, cols
+    this.sentSize = { ...size }
   }
 
   disconnect(): void {
-    if (this.config && this.config.close) {
-      this.config.close();
+    activeConnections.delete(this);
+    this.sftp.disconnect();
+    this.generation++;
+    const config = this.config;
+    this.config = null;
+    this.ready = false;
+    this.pendingSize = null;
+    this.sentSize = null;
+    if (config) {
+      config.cancelled = true;
+      config.close?.();
     }
   }
 
-  // SFTP Methods (Proxy to WASM)
-  public async sftpList(path: string): Promise<FileInfo[]> {
-    return await this.config?.sftpList?.(path) || []
-  }
-  public async sftpStat(path: string): Promise<FileInfo> {
-    return await this.config?.sftpStat?.(path)
-  }
-  public async sftpMkdir(path: string): Promise<void> {
-    return await this.config?.sftpMkdir?.(path)
-  }
-  public async sftpCreate(path: string): Promise<void> {
-    const handle = await this.config?.sftpOpenFile?.(path, "w")
-    if (handle == null) throw new Error("SFTP not initialized")
-    try {
-      await this.config.sftpWriteFile(handle, new Uint8Array(0))
-    } finally {
-      await this.config.sftpCloseFile(handle)
-    }
-  }
-  public async sftpRemove(path: string): Promise<void> {
-    return await this.config?.sftpRemove?.(path)
-  }
-  public async sftpRename(oldPath: string, newPath: string): Promise<void> {
-    return await this.config?.sftpRename?.(oldPath, newPath)
-  }
-  public async sftpReadFirstBytes(path: string, length: number): Promise<Uint8Array> {
-    const handle = await this.config?.sftpOpenFile?.(path, "r")
-    if (handle == null) throw new Error("SFTP not initialized")
-    try {
-      const chunk = await this.config.sftpReadFile(handle, length)
-      return chunk || new Uint8Array(0)
-    } finally {
-      await this.config.sftpCloseFile(handle)
-    }
-  }
-  public async sftpRead(path: string): Promise<string> {
-    const handle = await this.config?.sftpOpenFile?.(path, "r")
-    if (handle == null) throw new Error("SFTP not initialized")
-    try {
-      const chunks: Uint8Array[] = []
-      let totalLength = 0
-      while (true) {
-        const chunk = await this.config.sftpReadFile(handle, 256 * 1024)
-        if (!chunk) break
-        chunks.push(chunk)
-        totalLength += chunk.length
-      }
-      const allBytes = new Uint8Array(totalLength)
-      let offset = 0
-      for (const c of chunks) {
-        allBytes.set(c, offset)
-        offset += c.length
-      }
-      return new TextDecoder().decode(allBytes)
-    } finally {
-      await this.config.sftpCloseFile(handle)
-    }
-  }
-  public async sftpWrite(path: string, content: string): Promise<void> {
-    const handle = await this.config?.sftpOpenFile?.(path, "w")
-    if (handle == null) throw new Error("SFTP not initialized")
-    try {
-      const bytes = new TextEncoder().encode(content)
-      await this.config.sftpWriteFile(handle, bytes)
-    } finally {
-      await this.config.sftpCloseFile(handle)
-    }
-  }
-  public async sftpDownload(path: string, onProgress?: (loaded: number, speed: string) => void): Promise<Blob> {
-    const handle = await this.config?.sftpOpenFile?.(path, "r")
-    if (handle == null) throw new Error("SFTP not initialized")
-    try {
-      let loaded = 0
-      const chunks: BlobPart[] = []
-      const chunkSize = 256 * 1024 // 256KB
-      const startTime = Date.now()
-
-      while (true) {
-        const chunk = await this.config.sftpReadFile(handle, chunkSize)
-        if (!chunk) break
-        chunks.push(chunk)
-        loaded += chunk.length
-
-        if (onProgress) {
-            const elapsed = (Date.now() - startTime) / 1000
-            const speedBps = elapsed > 0 ? loaded / elapsed : 0
-            let speedStr = ''
-            if (speedBps > 1024 * 1024) speedStr = (speedBps / (1024 * 1024)).toFixed(2) + ' MB/s'
-            else if (speedBps > 1024) speedStr = (speedBps / 1024).toFixed(2) + ' KB/s'
-            else speedStr = speedBps.toFixed(2) + ' B/s'
-            onProgress(loaded, speedStr)
-        }
-      }
-      return new Blob(chunks)
-    } finally {
-      await this.config.sftpCloseFile(handle)
-    }
-  }
-  public async sftpUpload(file: File, remotePath: string, onProgress?: (loaded: number, speed: string) => void): Promise<void> {
-    const handle = await this.config?.sftpOpenFile?.(remotePath, "w")
-    if (handle == null) throw new Error("SFTP not initialized")
-    try {
-      const chunkSize = 256 * 1024
-      let offset = 0
-      const total = file.size
-      const startTime = Date.now()
-      
-      while (offset < total) {
-        const slice = file.slice(offset, offset + chunkSize)
-        const arrayBuffer = await slice.arrayBuffer()
-        const bytes = new Uint8Array(arrayBuffer)
-        
-        await this.config.sftpWriteFile(handle, bytes)
-        offset += bytes.length
-        
-        if (onProgress) {
-            const elapsed = (Date.now() - startTime) / 1000
-            const speedBps = elapsed > 0 ? offset / elapsed : 0
-            let speedStr = ''
-            if (speedBps > 1024 * 1024) speedStr = (speedBps / (1024 * 1024)).toFixed(2) + ' MB/s'
-            else if (speedBps > 1024) speedStr = (speedBps / 1024).toFixed(2) + ' KB/s'
-            else speedStr = speedBps.toFixed(2) + ' B/s'
-            onProgress(offset, speedStr)
-        }
-      }
-    } finally {
-      await this.config.sftpCloseFile(handle)
-    }
-  }
 }

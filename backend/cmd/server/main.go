@@ -1,12 +1,19 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"path"
 	"strings"
+	"syscall"
+	"time"
 
+	"webssh-backend/internal/auth"
 	"webssh-backend/internal/database"
 	"webssh-backend/internal/handler"
 	"webssh-backend/internal/middleware"
@@ -26,12 +33,17 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
+	manager, err := auth.New(db.DB)
+	if err != nil {
+		log.Fatalf("Failed to initialize authentication: %v", err)
+	}
+	defer manager.Close()
 
 	// Setup frontend filesystem (embedded or disk)
 	spaFS := staticfs.FS(
-		"static",                // same directory as binary
-		"../frontend/dist",      // dev: from backend/
-		"../../frontend/dist",   // dev: from backend/cmd/server/
+		"static",              // same directory as binary
+		"../frontend/dist",    // dev: from backend/
+		"../../frontend/dist", // dev: from backend/cmd/server/
 	)
 	indexHTML := staticfs.ReadIndexHTML(spaFS)
 
@@ -59,29 +71,29 @@ func main() {
 	})
 
 	// Initialize handlers
-	vaultHandler := handler.NewVaultHandler(db)
-	serverHandler := handler.NewServerHandler(db)
-	tcpProxyHandler := handler.NewTCPProxyHandler(db, *allowPrivateIPs)
-	settingsHandler := handler.NewSettingsHandler(db)
+	vaultHandler := handler.NewVaultHandler(db, manager)
+	tcpProxyHandler := handler.NewTCPProxyHandler(manager, *allowPrivateIPs)
 
 	// API routes
 	api := r.Group("/api")
+	api.Use(func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Next()
+	})
 	{
 		api.GET("/vault/status", vaultHandler.Status)
-		api.POST("/vault/create", vaultHandler.Create)
+		api.POST("/vault/create", middleware.RateLimit(5, 1), vaultHandler.Create)
 		api.POST("/vault/unlock", middleware.RateLimit(5, 1), vaultHandler.Unlock)
 
 		protected := api.Group("")
-		protected.Use(middleware.JWTAuth(db))
+		protected.Use(middleware.JWTAuth(manager))
 		{
-			protected.GET("/servers", serverHandler.List)
-			protected.POST("/servers", serverHandler.Create)
-			protected.PUT("/servers/:id", serverHandler.Update)
-			protected.DELETE("/servers/:id", serverHandler.Delete)
-
-			protected.GET("/settings", settingsHandler.Get)
-			protected.PUT("/settings", settingsHandler.Update)
-			protected.POST("/vault/rekey", vaultHandler.Rekey)
+			protected.GET("/vault", vaultHandler.Get)
+			protected.PUT("/vault", vaultHandler.Update)
+			protected.GET("/vault/session", vaultHandler.Session)
+			protected.POST("/vault/logout", vaultHandler.Logout)
+			protected.POST("/vault/rekey", middleware.RateLimit(5, 1), vaultHandler.Rekey)
 		}
 	}
 
@@ -112,8 +124,24 @@ func main() {
 	}
 
 	log.Printf("WebSSH server starting on http://localhost:%s", *port)
-	if err := r.Run(":" + *port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	server := &http.Server{Addr: ":" + *port, Handler: r, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	shutdown, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	serveErrors := make(chan error, 1)
+	go func() { serveErrors <- server.ListenAndServe() }()
+	select {
+	case <-shutdown.Done():
+	case err := <-serveErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("Server stopped: %v", err)
+		}
+	}
+	manager.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		server.Close()
+		log.Print("Server shutdown deadline reached")
 	}
 }
 

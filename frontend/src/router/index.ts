@@ -22,14 +22,10 @@ const router = createRouter({
 
 router.beforeEach(async (to, _from) => {
   const authStore = useAuthStore()
+  await authStore.initialize()
   
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    // If vault exists but not unlocked, authStore status check should redirect them
-    // to unlock flow, otherwise to create flow
-    await authStore.checkStatus()
-    if (!authStore.isAuthenticated) {
-      return { name: 'VaultSetup' }
-    }
+    return { name: 'VaultSetup' }
   } else if (to.name === 'VaultSetup' && authStore.isAuthenticated) {
     return { name: 'Dashboard' }
   }

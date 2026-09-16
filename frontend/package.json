@@ -1,10 +1,11 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "2.4.2",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "vitest run",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview"
   },
@@ -34,9 +35,12 @@
     "@types/node": "^24.13.2",
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.9.1",
+    "happy-dom": "^20.14.5",
     "typescript": "~6.0.2",
     "vite": "^8.1.0",
+    "vitest": "^5.0.1",
     "vue-tsc": "^3.3.5"
   }
 }

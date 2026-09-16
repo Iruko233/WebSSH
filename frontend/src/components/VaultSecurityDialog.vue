@@ -7,12 +7,23 @@
     destroy-on-close
   >
     <el-alert
-      :title="$t('security.warning') || '修改这些设置会导致金库被重新加密，所有其他设备将被登出。'"
+      v-if="activeTab !== 'session'"
+      :title="$t('security.warning')"
       type="warning"
       show-icon
       :closable="false"
       class="warning-alert"
     />
+    <el-alert
+      v-if="authStore.cleanupPending"
+      :title="$t('vault.cleanupPending')"
+      :description="$t('vault.cleanupPendingDetails')"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="warning-alert"
+    />
+    <el-alert v-if="sessionStatusError" :title="sessionStatusError" type="error" show-icon :closable="false" class="error-msg" />
 
     <el-tabs v-model="activeTab" class="security-tabs">
       <!-- Change Master Password Tab -->
@@ -122,14 +133,14 @@
             <div v-show="kdfForm.preset === 'custom'" class="custom-params-container">
               <div class="custom-params-grid">
                 <el-form-item :label="$t('setup.iterations') || '迭代次数'">
-                  <el-input-number v-model="customParams.iterations" :min="1" :step="kdfForm.algorithm === 'argon2id' ? 1 : 100000" class="full-width" controls-position="right" />
+                  <el-input-number v-model="customParams.iterations" :min="1" :max="kdfForm.algorithm === 'argon2id' ? 100 : 10000000" :step="kdfForm.algorithm === 'argon2id' ? 1 : 100000" class="full-width" controls-position="right" />
                 </el-form-item>
                 <template v-if="kdfForm.algorithm === 'argon2id'">
                   <el-form-item :label="$t('setup.memoryKiB') || '内存消耗 (KiB)'">
-                    <el-input-number v-model="customParams.memory" :min="1024" :step="1024" class="full-width" controls-position="right" />
+                    <el-input-number v-model="customParams.memory" :min="1024" :max="1048576" :step="1024" class="full-width" controls-position="right" />
                   </el-form-item>
                   <el-form-item :label="$t('setup.parallelism') || '并行度'">
-                    <el-input-number v-model="customParams.parallelism" :min="1" :step="1" class="full-width" controls-position="right" />
+                    <el-input-number v-model="customParams.parallelism" :min="1" :max="16" :step="1" class="full-width" controls-position="right" />
                   </el-form-item>
                 </template>
               </div>
@@ -156,13 +167,53 @@
           </el-button>
         </el-form>
       </el-tab-pane>
+
+      <el-tab-pane :label="$t('vault.sessionSettings')" name="session">
+        <div class="remember-setting">
+          <span id="remember-session-label">{{ $t('vault.rememberSession') }}</span>
+          <el-switch
+            :model-value="authStore.rememberSession"
+            :loading="rememberBusy"
+            :disabled="isLoading"
+            aria-labelledby="remember-session-label"
+            @change="handleRememberChange"
+          />
+        </div>
+        <p class="preset-description">{{ $t('vault.rememberDefault') }}</p>
+        <p class="preset-description">{{ $t('vault.rememberDetails') }}</p>
+
+        <el-form
+          v-if="rememberRequested && !authStore.rememberSession"
+          novalidate
+          label-position="top"
+          class="security-form"
+          @submit.prevent="enableRememberSession"
+        >
+          <el-form-item :label="$t('security.currentPassword')" required>
+            <el-input
+              v-model="rememberPassword"
+              type="password"
+              autocomplete="current-password"
+              show-password
+              :disabled="rememberBusy"
+            />
+          </el-form-item>
+          <p class="preset-description">{{ $t('vault.rememberPasswordRequired') }}</p>
+          <div class="remember-actions">
+            <el-button :disabled="rememberBusy" @click="cancelRememberSession">{{ $t('vault.cancel') }}</el-button>
+            <el-button type="primary" native-type="submit" :loading="rememberBusy">{{ $t('vault.enableRemember') }}</el-button>
+          </div>
+        </el-form>
+        <el-alert v-if="rememberError" :title="rememberError" type="error" show-icon :closable="false" class="error-msg mt-4" />
+      </el-tab-pane>
     </el-tabs>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import { getAuthGeneration } from '../lib/auth-session'
 import { KDF_ALGORITHMS, type KdfAlgorithm, type EncryptionPreset, type KdfParams } from '../types'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -180,11 +231,21 @@ const visible = computed({
   set: (val) => emit('update:modelValue', val)
 })
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const authStore = useAuthStore()
+const errorMessage = (err: unknown, fallback: string) => {
+  const message = err instanceof Error ? err.message : ''
+  return message ? (te(message) ? t(message) : message) : t(fallback)
+}
 
 const activeTab = ref('password')
 const isLoading = ref(false)
+const rememberRequested = ref(false)
+const rememberPassword = ref('')
+const rememberBusy = ref(false)
+const rememberError = ref('')
+const sessionStatusError = ref('')
+let dialogGeneration = 0
 
 // Password Form
 const pwdForm = ref({
@@ -202,6 +263,13 @@ const kdfForm = ref({
 })
 const kdfError = ref('')
 
+onBeforeUnmount(() => {
+  dialogGeneration++
+  pwdForm.value = { currentPassword: '', newPassword: '', confirmPassword: '' }
+  kdfForm.value.currentPassword = ''
+  rememberPassword.value = ''
+})
+
 const currentAlgoPresets = computed(() => KDF_ALGORITHMS[kdfForm.value.algorithm].presets)
 const customParams = ref<KdfParams>({ ...currentAlgoPresets.value['custom'].params })
 
@@ -209,18 +277,87 @@ watch(() => kdfForm.value.algorithm, (newAlgo) => {
   customParams.value = { ...KDF_ALGORITHMS[newAlgo].presets['custom'].params }
 })
 
-// Reset forms when dialog opens
-watch(visible, (newVal) => {
+// Forget password fields on both open and close, ignore late dialog responses
+watch(visible, async (newVal) => {
+  const generation = ++dialogGeneration
+  const authGeneration = getAuthGeneration()
+  pwdForm.value = { currentPassword: '', newPassword: '', confirmPassword: '' }
+  kdfForm.value.currentPassword = ''
+  pwdError.value = ''
+  kdfError.value = ''
+  rememberRequested.value = false
+  rememberPassword.value = ''
+  rememberError.value = ''
+  sessionStatusError.value = ''
   if (newVal) {
-    pwdForm.value = { currentPassword: '', newPassword: '', confirmPassword: '' }
-    kdfForm.value.currentPassword = ''
-    pwdError.value = ''
-    kdfError.value = ''
     isLoading.value = false
+    try {
+      await authStore.refreshSessionStatus()
+    } catch (err: unknown) {
+      if (generation === dialogGeneration && authGeneration === getAuthGeneration()) {
+        sessionStatusError.value = errorMessage(err, 'vault.sessionStatusFailed')
+      }
+    }
   }
+}, { immediate: true })
+
+watch(() => authStore.isAuthenticated, (authenticated) => {
+  if (!authenticated) visible.value = false
 })
 
+const cancelRememberSession = () => {
+  rememberRequested.value = false
+  rememberPassword.value = ''
+  rememberError.value = ''
+}
+
+const handleRememberChange = async (enabled: string | number | boolean) => {
+  if (rememberBusy.value || isLoading.value) return
+  rememberError.value = ''
+  if (enabled === true) {
+    rememberRequested.value = true
+    return
+  }
+  const generation = dialogGeneration
+  const authGeneration = getAuthGeneration()
+  rememberBusy.value = true
+  try {
+    await authStore.setRememberSession(false)
+    if (generation === dialogGeneration && authGeneration === getAuthGeneration()) cancelRememberSession()
+  } catch (err: unknown) {
+    if (generation === dialogGeneration && authGeneration === getAuthGeneration()) {
+      rememberError.value = errorMessage(err, 'vault.rememberFailed')
+    }
+  } finally {
+    rememberBusy.value = false
+  }
+}
+
+const enableRememberSession = async () => {
+  if (rememberBusy.value || isLoading.value) return
+  rememberError.value = ''
+  if (!rememberPassword.value) {
+    rememberError.value = t('setup.pwdRequired')
+    return
+  }
+  const generation = dialogGeneration
+  const authGeneration = getAuthGeneration()
+  rememberBusy.value = true
+  try {
+    await authStore.setRememberSession(true, rememberPassword.value)
+    if (generation === dialogGeneration && authGeneration === getAuthGeneration()) cancelRememberSession()
+  } catch (err: unknown) {
+    if (generation === dialogGeneration && authGeneration === getAuthGeneration()) {
+      rememberError.value = errorMessage(err, 'vault.rememberFailed')
+    }
+  } finally {
+    rememberPassword.value = ''
+    rememberBusy.value = false
+  }
+}
+
 const handlePasswordSubmit = async () => {
+  if (isLoading.value || rememberBusy.value) return
   pwdError.value = ''
   if (!pwdForm.value.currentPassword || !pwdForm.value.newPassword || !pwdForm.value.confirmPassword) {
     pwdError.value = t('security.pwdRequired') || '请填写所有密码字段'
@@ -232,26 +369,38 @@ const handlePasswordSubmit = async () => {
   }
 
   isLoading.value = true
+  const generation = dialogGeneration
+  const authGeneration = getAuthGeneration()
+  const currentPassword = pwdForm.value.currentPassword
+  const newPassword = pwdForm.value.newPassword
   try {
     // Changing password keeps current KDF params
-    if (!authStore.vaultKdfParams) throw new Error('Missing current KDF params')
+    const metadata = await authStore.ensureVaultMetadata()
+    if (generation !== dialogGeneration || authGeneration !== getAuthGeneration()) return
     
     await authStore.rekey(
-      pwdForm.value.currentPassword,
-      pwdForm.value.newPassword,
-      authStore.vaultKdfParams
+      currentPassword,
+      newPassword,
+      metadata.kdfParams
     )
     
-    ElMessage.success(t('security.rekeySuccess') || '金库重加密成功！')
+    if (generation !== dialogGeneration || !authStore.isAuthenticated) return
+    ElMessage.success(t('security.rekeySuccess'))
     visible.value = false
-  } catch (err: any) {
-    pwdError.value = err.message || '重加密失败'
+  } catch (err: unknown) {
+    if (generation === dialogGeneration && authGeneration === getAuthGeneration()) {
+      pwdError.value = errorMessage(err, 'vault.saveFailed')
+    }
   } finally {
-    isLoading.value = false
+    if (generation === dialogGeneration) {
+      isLoading.value = false
+      pwdForm.value = { currentPassword: '', newPassword: '', confirmPassword: '' }
+    }
   }
 }
 
 const handleKdfSubmit = async () => {
+  if (isLoading.value || rememberBusy.value) return
   kdfError.value = ''
   if (!kdfForm.value.currentPassword) {
     kdfError.value = t('security.pwdRequired') || '请填写当前主密码'
@@ -259,6 +408,9 @@ const handleKdfSubmit = async () => {
   }
 
   isLoading.value = true
+  const generation = dialogGeneration
+  const authGeneration = getAuthGeneration()
+  const currentPassword = kdfForm.value.currentPassword
   try {
     let paramsToUse = currentAlgoPresets.value[kdfForm.value.preset].params
     if (kdfForm.value.preset === 'custom') {
@@ -267,17 +419,23 @@ const handleKdfSubmit = async () => {
 
     // Changing KDF keeps current password
     await authStore.rekey(
-      kdfForm.value.currentPassword,
-      kdfForm.value.currentPassword,
+      currentPassword,
+      currentPassword,
       paramsToUse
     )
     
-    ElMessage.success(t('security.rekeySuccess') || '金库重加密成功！')
+    if (generation !== dialogGeneration || !authStore.isAuthenticated) return
+    ElMessage.success(t('security.rekeySuccess'))
     visible.value = false
-  } catch (err: any) {
-    kdfError.value = err.message || '重加密失败'
+  } catch (err: unknown) {
+    if (generation === dialogGeneration && authGeneration === getAuthGeneration()) {
+      kdfError.value = errorMessage(err, 'vault.saveFailed')
+    }
   } finally {
-    isLoading.value = false
+    if (generation === dialogGeneration) {
+      isLoading.value = false
+      kdfForm.value.currentPassword = ''
+    }
   }
 }
 </script>
@@ -302,6 +460,29 @@ const handleKdfSubmit = async () => {
 
 .full-width {
   width: 100%;
+}
+
+.remember-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 10px;
+}
+
+.remember-setting :deep(.el-switch) {
+  flex-shrink: 0;
+}
+
+.remember-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.remember-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .mt-2 {

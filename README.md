@@ -38,7 +38,7 @@
 - **内置 SFTP 与监控**：文件管理与系统资源监控（CPU/内存/网络流速）全部通过 WASM SSH 客户端执行
 - **单密码认证**：无需用户名，一个主密码解锁一切
 - **可自定义加密强度**：标准 / 高 / 偏执 三档 + 自定义
-- **密码不落盘**：密钥仅存 sessionStorage，关浏览器即失效
+- **可选记住解锁凭证**：默认仅在页面内存中保留密钥，开启后将解锁密钥和令牌保存在标签页的 sessionStorage，手动锁定时清除，浏览器恢复会话可能保留这些凭证
 - **部署灵活**：既可以本地运行当作普通的 SSH 客户端，也可以部署在 NAS 或服务器上作为 Web 跳板机，方便在浏览器随时随地管理服务器
 - **单二进制部署**：前端内嵌，一个文件即可运行
 - **移动端适配**：包含专为手机优化的带 Ctrl/Alt 组合键的虚拟键盘
@@ -127,8 +127,12 @@ _注：项目通过 GitHub Actions 实现自动化发布，向主分支推送 `v
 ### 安全架构 (Security Architecture)
 
 #### 1. 静态数据加密 (Data at Rest)
-- **浏览器端加密**：所有服务器凭据（密码/私钥）在发送给后端前，都会在浏览器中使用基于“主密码”派生的 AES-256-GCM 密钥进行加密
-- **后端只存密文**：Go 后端数据库中只保存加密后的凭据密文，不保存主密码或任何明文凭据
+- **整体保险库**：服务器资料、分组、标签、指纹、业务时间戳和全部业务设置在浏览器内组成一个对象，使用主密码派生的 AES-256-GCM 密钥加密，数据库仅额外保留必要的认证校验值、盐、KDF 参数和版本信息
+- **长度填充**：原始长度、JSON 与随机填充一起加密，每次保存补齐到 4 KiB 整数倍，隐藏精确内容长度但不隐藏容量档位或写入频率，原始 JSON 上限为 8 MiB
+- **保存一致性**：版本条件更新防止多个标签页相互覆盖，冲突保留草稿并要求明确确认，修改主密码原子更新完整保险库并撤销旧会话
+- **历史清理**：启用 secure_delete 并主动截断 WAL，受阻时显示待清理状态并重试，这不保证物理擦除 SSD、快照或外部副本，导出文件和 SFTP 临时缓存不属于保险库加密范围
+- **格式兼容**：旧版数据库结构不会自动迁移或删除，启动时明确拒绝旧结构，开发环境只有在明确允许丢弃数据后才重建数据库
+- **登录认证**：JWT 签名密钥仅存在于服务进程内存，重启后需要重新解锁，主密码不保存，解锁密钥同样是可解密数据的敏感凭证
 - **防拖库**：如果 `webssh.db` 数据库文件被窃取，没有主密码的情况下，攻击者无法解密服务器凭据
 - **密码丢失 = 数据永久不可恢复**
 
@@ -167,7 +171,7 @@ A zero-knowledge Web SSH management tool based on browser-side Go WASM, all serv
 - **Built-in SFTP and Monitoring**: File management and system resource monitoring (CPU/memory/network speed) are all executed via the WASM SSH client
 - **Single Password Authentication**: No username required, a single master password unlocks everything
 - **Customizable Encryption Strength**: Standard / High / Paranoid tiers + Custom
-- **Password Never Touches Disk**: Keys are only stored in sessionStorage, becoming invalid as soon as the browser is closed
+- **Optional Unlock Credentials**: Keys stay in page memory by default, opting in saves the unlock key and token in the tab's sessionStorage until manual locking, browser session restoration may retain these credentials
 - **Flexible Use Cases**: Run it locally as a regular SSH client, or deploy it on a NAS or server as a Web jump server to access your machines remotely from any browser
 - **Single Binary Deployment**: Frontend is embedded, runs from a single file
 - **Mobile Friendly**: Includes a virtual keyboard optimized for mobile with Ctrl/Alt modifier keys
@@ -256,8 +260,12 @@ _Note: The project uses GitHub Actions for automated releases, pushing a tag sta
 ### Security Architecture
 
 #### 1. Data at Rest
-- **Browser-Side Encryption**: All server credentials (passwords/private keys) are encrypted in the browser using an AES-256-GCM key derived from the "master password" before being sent to the backend
-- **Backend Only Stores Ciphertext**: The Go backend database only stores the encrypted credential ciphertext, and does not store the master password or any plaintext credentials
+- **Complete Vault**: Server records, groups, tags, fingerprints, business timestamps and all application preferences form one browser-encrypted AES-256-GCM payload, the database additionally retains only necessary authentication verifiers, salt, KDF parameters and version metadata
+- **Length Padding**: The original length, JSON and fresh random padding are encrypted together in 4 KiB buckets, this hides exact content length but not capacity buckets or write frequency, original JSON is limited to 8 MiB
+- **Consistent Writes**: Version checks prevent stale tabs from overwriting changes, conflicts preserve drafts for explicit review, password changes atomically replace the complete vault and revoke old sessions
+- **History Cleanup**: secure_delete and active WAL truncation reduce logical history retention, blocked cleanup is reported and retried, this does not securely erase SSD blocks, snapshots or external copies, exports and SFTP temporary caches remain outside vault encryption
+- **Format Compatibility**: Legacy database schemas are rejected without automatic migration or deletion, rebuilding a development database requires explicit authorization to discard its data
+- **Authentication**: JWT signing keys remain in process memory and a restart requires unlocking again, the master password is not stored, saved unlock keys remain sensitive credentials capable of decrypting the vault
 - **Anti-Database Dumping**: If the `webssh.db` database file is stolen, attackers cannot decrypt the server credentials without the master password
 - **Lost Password = Data Permanently Irrecoverable**
 

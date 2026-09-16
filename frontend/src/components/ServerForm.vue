@@ -142,7 +142,7 @@ const form = ref<{
   tags: [],
   host: '',
   port: 22,
-  username: '',
+  username: 'root',
   password: '',
   expectedHostKey: undefined
 })
@@ -176,7 +176,7 @@ watch(() => props.server, (newServer) => {
       tags: [],
       host: '',
       port: 22,
-      username: '',
+      username: 'root',
       password: '',
       expectedHostKey: undefined
     }

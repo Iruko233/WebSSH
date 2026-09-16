@@ -1,12 +1,12 @@
 package handler
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,10 +14,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
+	"webssh-backend/internal/auth"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/hkdf"
 )
@@ -28,12 +29,12 @@ var upgrader = websocket.Upgrader{
 }
 
 type TCPProxyHandler struct {
-	db              *sql.DB
+	auth            *auth.Manager
 	allowPrivateIPs bool
 }
 
-func NewTCPProxyHandler(db *sql.DB, allowPrivateIPs bool) *TCPProxyHandler {
-	return &TCPProxyHandler{db: db, allowPrivateIPs: allowPrivateIPs}
+func NewTCPProxyHandler(manager *auth.Manager, allowPrivateIPs bool) *TCPProxyHandler {
+	return &TCPProxyHandler{auth: manager, allowPrivateIPs: allowPrivateIPs}
 }
 
 type initProxyMsg struct {
@@ -99,6 +100,8 @@ func (h *TCPProxyHandler) Handle(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(64 * 1024)
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	// 1. Read first message and detect encrypted vs plaintext
 	_, msg, err := conn.ReadMessage()
@@ -180,19 +183,46 @@ func (h *TCPProxyHandler) Handle(c *gin.Context) {
 		}
 	}
 
-	if initMsg.Token == "" || initMsg.Host == "" || initMsg.Port == 0 {
+	if initMsg.Token == "" || initMsg.Host == "" || initMsg.Port < 1 || initMsg.Port > 65535 {
 		sendResponse([]byte(`{"error": "missing parameters"}`))
 		return
 	}
 
 	// 2. Validate JWT
-	if !h.validateJWT(initMsg.Token) {
+	claims, err := h.auth.Validate(initMsg.Token)
+	if err != nil {
 		sendResponse([]byte(`{"error": "auth failed"}`))
 		return
 	}
+	// Register before DNS/dial, revocation cancels even connections not yet established
+	proxyContext, cancel := context.WithCancel(c.Request.Context())
+	var connectionMu sync.Mutex
+	var targetConnection net.Conn
+	closed := false
+	stop := func() {
+		cancel()
+		conn.Close()
+		connectionMu.Lock()
+		closed = true
+		if targetConnection != nil {
+			targetConnection.Close()
+		}
+		connectionMu.Unlock()
+	}
+	unregister, err := h.auth.Register(claims, stop)
+	if err != nil {
+		stop()
+		return
+	}
+	defer unregister()
+	defer stop()
+	conn.SetReadDeadline(time.Time{})
+	conn.SetReadLimit(4 * 1024 * 1024)
 
 	// 3. Resolve and check SSRF
-	ips, err := net.LookupIP(initMsg.Host)
+	dialContext, cancelDial := context.WithTimeout(proxyContext, 10*time.Second)
+	defer cancelDial()
+	ips, err := net.DefaultResolver.LookupIP(dialContext, "ip", initMsg.Host)
 	if err != nil {
 		sendResponse([]byte(`{"error": "dns resolution failed"}`))
 		return
@@ -219,12 +249,19 @@ func (h *TCPProxyHandler) Handle(c *gin.Context) {
 	addr := net.JoinHostPort(targetIP.String(), fmt.Sprintf("%d", initMsg.Port))
 
 	// 4. Dial target TCP
-	tcpConn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	tcpConn, err := (&net.Dialer{}).DialContext(dialContext, "tcp", addr)
 	if err != nil {
 		sendResponse([]byte(`{"error": "tcp dial failed"}`))
 		return
 	}
 	defer tcpConn.Close()
+	connectionMu.Lock()
+	if closed || proxyContext.Err() != nil {
+		connectionMu.Unlock()
+		return
+	}
+	targetConnection = tcpConn
+	connectionMu.Unlock()
 
 	// Tell client connection is successful
 	sendResponse([]byte(`{"status": "connected"}`))
@@ -243,28 +280,6 @@ func (h *TCPProxyHandler) Handle(c *gin.Context) {
 	}()
 
 	<-errc
-}
-
-func (h *TCPProxyHandler) validateJWT(tokenStr string) bool {
-	var secret string
-	err := h.db.QueryRow("SELECT jwt_secret FROM vault_config WHERE id = 1").Scan(&secret)
-	if err != nil {
-		return false
-	}
-
-	jwtSecret, err := base64.StdEncoding.DecodeString(secret)
-	if err != nil {
-		return false
-	}
-
-	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return jwtSecret, nil
-	})
-
-	return err == nil && token.Valid
 }
 
 // --- ECDH + AES-256-GCM helpers ---
