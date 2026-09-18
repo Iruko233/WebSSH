@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -119,6 +120,7 @@ func main() {
 				return
 			}
 			// SPA fallback
+			c.Header("Cache-Control", "no-store")
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
 		})
 	}
@@ -144,6 +146,8 @@ func main() {
 		log.Print("Server shutdown deadline reached")
 	}
 }
+
+var fingerprintedAsset = regexp.MustCompile(`^/assets/.+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$`)
 
 func serveStatic(c *gin.Context, fs http.FileSystem, pathStr string) {
 	f, err := fs.Open(pathStr)
@@ -188,6 +192,10 @@ func serveStatic(c *gin.Context, fs http.FileSystem, pathStr string) {
 		contentType = "application/wasm"
 	}
 
-	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	// Only content-addressed assets survive upgrades unchanged at the same URL
+	c.Header("Cache-Control", "no-store")
+	if fingerprintedAsset.MatchString(pathStr) {
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	c.DataFromReader(http.StatusOK, stat.Size(), contentType, f, nil)
 }

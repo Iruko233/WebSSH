@@ -4,8 +4,10 @@ let configs: any[]
 let start: ReturnType<typeof vi.fn>
 let instantiate: ReturnType<typeof vi.spyOn>
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules()
+  const { setAuthToken } = await import('../src/lib/auth-session')
+  setAuthToken('test-session')
   configs = []
   start = vi.fn((config: any) => { config.close = vi.fn(); configs.push(config) })
   vi.stubGlobal('startWasmSSH', start)
@@ -19,6 +21,13 @@ function options() {
 }
 
 describe('SSH callback lifecycle', () => {
+  it('loads the build-specific WASM URL and revalidates old cached responses', async () => {
+    vi.stubGlobal('__SSH_WASM_URL__', '/assets/main-0123456789abcdef.wasm')
+    const { SSHConnection } = await import('../src/lib/ssh-client')
+    await new SSHConnection().connect(options())
+    expect(fetch).toHaveBeenCalledWith('/assets/main-0123456789abcdef.wasm', { cache: 'no-cache' })
+    expect(start).toHaveBeenCalledOnce()
+  })
   it('uses readiness and normal remote closure callbacks', async () => {
     const { SSHConnection } = await import('../src/lib/ssh-client')
     const opts = options()

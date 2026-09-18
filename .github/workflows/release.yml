@@ -35,6 +35,7 @@ jobs:
         working-directory: ./frontend/wasm
         run: |
           GOOS=js GOARCH=wasm go build -o ../public/main.wasm .
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ../public/wasm_exec.js
 
       - name: Build Frontend
         working-directory: ./frontend

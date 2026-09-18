@@ -3,6 +3,7 @@
  */
 
 declare const Go: any;
+declare const __SSH_WASM_URL__: string;
 
 import { SftpClient, type SftpState } from './sftp-client'
 import { getAuthGeneration, getAuthToken } from './auth-session'
@@ -59,7 +60,8 @@ async function initWasm() {
   wasmInitializing = (async () => {
     try {
       const go = new Go();
-      const result = await WebAssembly.instantiateStreaming(fetch("/main.wasm"), go.importObject);
+      const wasmUrl = typeof __SSH_WASM_URL__ === 'string' ? __SSH_WASM_URL__ : '/main.wasm';
+      const result = await WebAssembly.instantiateStreaming(fetch(wasmUrl, { cache: 'no-cache' }), go.importObject);
       go.run(result.instance);
       wasmInitialized = true;
     } catch (e) {

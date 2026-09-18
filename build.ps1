@@ -23,6 +23,8 @@ if (-not $SkipFrontend) {
     $env:GOARCH = "wasm"
     go build -o ../public/main.wasm .
     if ($LASTEXITCODE -ne 0) { throw "WASM build failed" }
+    $GoRoot = go env GOROOT
+    Copy-Item -LiteralPath (Join-Path $GoRoot 'lib/wasm/wasm_exec.js') -Destination '../public/wasm_exec.js' -Force
     Write-Host "   WASM built successfully." -ForegroundColor Green
 
     # 2. Build Frontend
